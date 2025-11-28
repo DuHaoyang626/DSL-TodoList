@@ -9,6 +9,9 @@ from math import ceil
 
 from tkinter import messagebox, ttk
 import mysql.connector
+from markdown import markdown
+from tkhtmlview import HTMLScrolledText
+from tkinter import scrolledtext
 
 DB_CONFIG = {
     "host": "localhost",
@@ -52,8 +55,16 @@ def ensure_schema() -> None:
 
 
 class TodoListPanel:
-    def __init__(self, master: tk.Widget, title: str, on_toggle: Callable[[Todo], None], accent: str) -> None:
+    def __init__(
+        self,
+        master: tk.Widget,
+        title: str,
+        on_toggle: Callable[[Todo], None],
+        on_view: Callable[[Todo], None],
+        accent: str,
+    ) -> None:
         self.on_toggle = on_toggle
+        self.on_view = on_view
         self.frame = ttk.Frame(master)
         self.frame.columnconfigure(0, weight=1)
         self.frame.rowconfigure(1, weight=1)
@@ -89,7 +100,14 @@ class TodoListPanel:
         for child in self.inner.winfo_children():
             child.destroy()
         for todo, overdue in zip(todos, overdue_flags):
-            tile = TodoTile(self.inner, todo, self.on_toggle, is_completed=is_completed, overdue=overdue)
+            tile = TodoTile(
+                self.inner,
+                todo,
+                self.on_toggle,
+                self.on_view,
+                is_completed=is_completed,
+                overdue=overdue,
+            )
             tile.pack(fill="x", expand=True, pady=6, padx=4)
 
 
@@ -99,6 +117,7 @@ class TodoTile(tk.Frame):
         master: tk.Widget,
         todo: Todo,
         on_toggle: Callable[[Todo], None],
+        on_view: Callable[[Todo], None],
         *,
         is_completed: bool,
         overdue: bool,
@@ -107,6 +126,7 @@ class TodoTile(tk.Frame):
         super().__init__(master, bg=bg, bd=0, highlightthickness=0, padx=14, pady=10)
         self.todo = todo
         self.on_toggle = on_toggle
+        self.on_view = on_view
         self.is_completed = is_completed
         self.overdue = overdue
         self.bg = bg
@@ -120,18 +140,24 @@ class TodoTile(tk.Frame):
 
         info = tk.Frame(self, bg=bg)
         info.pack(side="left", fill="both", expand=True)
+        info.bind("<Button-1>", self._handle_view)
         title_font = ("Microsoft YaHei", 12, "bold")
         meta_font = ("Microsoft YaHei", 10)
 
-        tk.Label(info, text=todo.title, font=title_font, fg=text_color, bg=bg).pack(anchor="w")
+        title_label = tk.Label(info, text=todo.title, font=title_font, fg=text_color, bg=bg)
+        title_label.pack(anchor="w")
+        title_label.bind("<Button-1>", self._handle_view)
         due_text = "无截止时间" if not todo.due_at else todo.due_at.strftime("%Y-%m-%d %H:%M")
         meta_text = f"截止：{due_text}"
-        tk.Label(info, text=meta_text, font=meta_font, fg="#7f8c8d", bg=bg).pack(anchor="w", pady=(4, 0))
+        meta_label = tk.Label(info, text=meta_text, font=meta_font, fg="#7f8c8d", bg=bg)
+        meta_label.pack(anchor="w", pady=(4, 0))
+        meta_label.bind("<Button-1>", self._handle_view)
 
         badge_text, badge_bg, badge_fg = self._badge_props()
         badge_frame = tk.Frame(self, bg=bg)
         badge_frame.pack(side="right", anchor="n")
-        tk.Label(
+        badge_frame.bind("<Button-1>", self._handle_view)
+        badge_label = tk.Label(
             badge_frame,
             text=badge_text,
             font=("Microsoft YaHei", 10, "bold"),
@@ -139,9 +165,12 @@ class TodoTile(tk.Frame):
             bg=badge_bg,
             padx=10,
             pady=4,
-        ).pack()
+        )
+        badge_label.pack()
+        badge_label.bind("<Button-1>", self._handle_view)
 
         self._draw_indicator(indicator_color)
+        self.bind("<Button-1>", self._handle_view)
 
     def _draw_indicator(self, color: str) -> None:
         self.indicator.delete("all")
@@ -163,6 +192,11 @@ class TodoTile(tk.Frame):
 
     def _handle_toggle(self, _event=None) -> None:
         self.on_toggle(self.todo)
+        return "break"
+
+    def _handle_view(self, _event=None) -> None:
+        self.on_view(self.todo)
+        return "break"
 
     def _badge_props(self) -> Tuple[str, str, str]:
         if self.is_completed:
@@ -188,6 +222,137 @@ class TodoTile(tk.Frame):
         return (f"剩余 {days} 天", "#ffffff", "#2c3e50")
 
 
+class TodoDetailDialog(tk.Toplevel):
+    def __init__(
+        self,
+        master: tk.Tk,
+        todo: Todo,
+        on_confirm: Callable[[str, Optional[datetime], str], bool],
+    ) -> None:
+        super().__init__(master)
+        self.todo = todo
+        self.on_confirm = on_confirm
+        self.title("待办详情")
+        self.geometry("520x640")
+        self.minsize(520, 640)
+        self.config(padx=20, pady=20)
+        self.grab_set()
+
+        self.no_deadline_var = tk.BooleanVar(value=todo.due_at is None)
+        self.completed_var = tk.BooleanVar(value=todo.status == "completed")
+        due_str = todo.due_at.strftime("%Y-%m-%d %H:%M") if todo.due_at else ""
+        self.due_var = tk.StringVar(value=due_str)
+
+        self._build_header()
+        self._build_fields()
+        self._build_markdown_section()
+
+    def _build_header(self) -> None:
+        header = tk.Frame(self)
+        header.pack(fill="x", pady=(0, 10))
+        tk.Label(header, text="待办详情", font=("Microsoft YaHei", 16, "bold")).pack(side="left")
+
+        button_group = tk.Frame(header)
+        button_group.pack(side="right")
+        tk.Button(button_group, text="✕", command=self.destroy, fg="#c0392b", bd=0, font=("Segoe UI", 14, "bold")).pack(side="left", padx=4)
+        tk.Button(button_group, text="✔", command=self._handle_confirm, fg="#27ae60", bd=0, font=("Segoe UI", 14, "bold")).pack(side="left")
+
+    def _build_fields(self) -> None:
+        info_frame = ttk.Frame(self)
+        info_frame.pack(fill="x", pady=(0, 15))
+        info_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(info_frame, text="标题：", font=("Microsoft YaHei", 11)).grid(row=0, column=0, sticky="w", pady=4)
+        ttk.Label(info_frame, text=self.todo.title, font=("Microsoft YaHei", 11, "bold"), wraplength=360).grid(row=0, column=1, sticky="w", pady=4)
+
+        ttk.Label(info_frame, text="截止时间 (YYYY-MM-DD HH:MM)：", font=("Microsoft YaHei", 11)).grid(row=1, column=0, columnspan=2, sticky="w", pady=(10, 4))
+        self.due_entry = ttk.Entry(info_frame, textvariable=self.due_var, width=30)
+        self.due_entry.grid(row=2, column=0, columnspan=2, sticky="we")
+
+        checkbox_frame = ttk.Frame(info_frame)
+        checkbox_frame.grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        ttk.Checkbutton(checkbox_frame, text="永不截止", variable=self.no_deadline_var, command=self._toggle_due_entry).pack(side="left", padx=(0, 15))
+        ttk.Checkbutton(checkbox_frame, text="标记为完成", variable=self.completed_var).pack(side="left")
+
+        self._toggle_due_entry()
+
+    def _build_markdown_section(self) -> None:
+        self.markdown_frame = ttk.Frame(self)
+        self.markdown_frame.pack(fill="both", expand=True)
+        header = ttk.Frame(self.markdown_frame)
+        header.pack(fill="x")
+
+        ttk.Label(header, text="详情 (Markdown)", font=("Microsoft YaHei", 11, "bold")).pack(side="left")
+        self.edit_button = ttk.Button(header, text="编辑内容", command=self._switch_to_edit)
+        self.edit_button.pack(side="right")
+        self.preview_button = ttk.Button(header, text="查看预览", command=self._switch_to_preview, state=tk.DISABLED)
+        self.preview_button.pack(side="right", padx=(0, 8))
+
+        self.detail_editor = scrolledtext.ScrolledText(self.markdown_frame, height=12, wrap="word")
+        self.detail_editor.insert("1.0", self.todo.details or "")
+
+        self.preview_container = ttk.Frame(self.markdown_frame)
+        self.preview_container.pack(fill="both", expand=True, pady=(6, 0))
+        self.preview_container.bind("<Double-Button-1>", self._switch_to_edit)
+
+        self.html_view = HTMLScrolledText(
+            self.preview_container,
+            html=self._render_markdown(self._current_details()),
+            width=60,
+            height=18,
+        )
+        self.html_view.pack(fill="both", expand=True)
+        self.html_view.bind("<Double-Button-1>", self._switch_to_edit)
+
+        self.edit_mode = False
+
+    def _switch_to_edit(self, _event=None) -> None:
+        if self.edit_mode:
+            return "break"
+        self.edit_mode = True
+        self.preview_container.pack_forget()
+        self.detail_editor.pack(fill="both", expand=True, pady=(6, 0))
+        self.preview_button.configure(state=tk.NORMAL)
+        return "break"
+
+    def _switch_to_preview(self) -> None:
+        if not self.edit_mode:
+            return
+        content = self._current_details()
+        self.html_view.set_html(self._render_markdown(content))
+        self.detail_editor.pack_forget()
+        self.preview_container.pack(fill="both", expand=True, pady=(6, 0))
+        self.edit_mode = False
+        self.preview_button.configure(state=tk.DISABLED)
+
+    def _current_details(self) -> str:
+        return self.detail_editor.get("1.0", tk.END).strip()
+
+    def _render_markdown(self, text: Optional[str] = None) -> str:
+        body = (text if text is not None else self._current_details()) or "暂无详情"
+        return markdown(body, extensions=["fenced_code", "tables"])
+
+    def _toggle_due_entry(self) -> None:
+        state = "disabled" if self.no_deadline_var.get() else "normal"
+        self.due_entry.configure(state=state)
+
+    def _handle_confirm(self) -> None:
+        due_value: Optional[datetime] = None
+        if not self.no_deadline_var.get():
+            due_str = self.due_var.get().strip()
+            if not due_str:
+                messagebox.showerror("输入错误", "请输入截止时间或选择永不截止")
+                return
+            try:
+                due_value = datetime.strptime(due_str, "%Y-%m-%d %H:%M")
+            except ValueError:
+                messagebox.showerror("输入错误", "截止时间格式应为 YYYY-MM-DD HH:MM")
+                return
+
+        status = "completed" if self.completed_var.get() else "pending"
+        details_md = self.detail_editor.get("1.0", tk.END).strip()
+        if self.on_confirm(status, due_value, details_md):
+            self.destroy()
 class TodoApp:
     def __init__(self) -> None:
         ensure_schema()
@@ -220,10 +385,10 @@ class TodoApp:
         right_frame.columnconfigure(0, weight=1)
         right_frame.rowconfigure(0, weight=1)
 
-        self.active_panel = TodoListPanel(left_frame, "未完成", self.mark_complete, accent="#2980b9")
+        self.active_panel = TodoListPanel(left_frame, "未完成", self.mark_complete, self._open_detail, accent="#2980b9")
         self.active_panel.frame.grid(row=0, column=0, sticky="nsew")
 
-        self.completed_panel = TodoListPanel(right_frame, "已完成", self.mark_pending, accent="#27ae60")
+        self.completed_panel = TodoListPanel(right_frame, "已完成", self.mark_pending, self._open_detail, accent="#27ae60")
         self.completed_panel.frame.grid(row=0, column=0, sticky="nsew")
 
     def refresh_lists(self) -> None:
@@ -271,6 +436,28 @@ class TodoApp:
     def mark_pending(self, todo: Todo) -> None:
         self._update_status(todo.todo_id, "pending")
         self.refresh_lists()
+
+    def _open_detail(self, todo: Todo) -> None:
+        TodoDetailDialog(
+            self.root,
+            todo,
+            lambda status, due, details: self._apply_detail_change(todo, status, due, details),
+        )
+
+    def _apply_detail_change(self, todo: Todo, status: str, due: Optional[datetime], details: str) -> bool:
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "UPDATE todos SET status=%s, due_at=%s, details=%s WHERE id=%s",
+                (status, due, details, todo.todo_id),
+            )
+            self.conn.commit()
+            cursor.close()
+        except mysql.connector.Error as exc:
+            messagebox.showerror("数据库错误", f"无法更新待办：{exc}")
+            return False
+        self.refresh_lists()
+        return True
 
     def _update_status(self, todo_id: int, status: str) -> None:
         try:
