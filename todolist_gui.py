@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import tkinter as tk
-from datetime import datetime
+from datetime import datetime, timedelta
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
 from math import ceil
@@ -67,16 +67,18 @@ class TodoListPanel:
         self.on_view = on_view
         self.frame = ttk.Frame(master)
         self.frame.columnconfigure(0, weight=1)
-        self.frame.rowconfigure(1, weight=1)
+        self.content_row = 1 if title else 0
+        self.frame.rowconfigure(self.content_row, weight=1)
 
-        ttk.Label(self.frame, text=title, font=("Microsoft YaHei", 14, "bold"), foreground=accent).grid(
-            row=0, column=0, sticky="w"
-        )
+        if title:
+            ttk.Label(self.frame, text=title, font=("Microsoft YaHei", 14, "bold"), foreground=accent).grid(
+                row=0, column=0, sticky="w"
+            )
 
         self.canvas = tk.Canvas(self.frame, highlightthickness=0)
-        self.canvas.grid(row=1, column=0, sticky="nsew")
+        self.canvas.grid(row=self.content_row, column=0, sticky="nsew")
         self.scrollbar = ttk.Scrollbar(self.frame, orient="vertical", command=self.canvas.yview)
-        self.scrollbar.grid(row=1, column=1, sticky="ns")
+        self.scrollbar.grid(row=self.content_row, column=1, sticky="ns")
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
 
         self.inner = tk.Frame(self.canvas, bg="#f5f6fa")
@@ -228,10 +230,12 @@ class TodoDetailDialog(tk.Toplevel):
         master: tk.Tk,
         todo: Todo,
         on_confirm: Callable[[str, Optional[datetime], str], bool],
+        on_delete: Callable[[], bool],
     ) -> None:
         super().__init__(master)
         self.todo = todo
         self.on_confirm = on_confirm
+        self.on_delete = on_delete
         self.title("待办详情")
         self.geometry("520x640")
         self.minsize(520, 640)
@@ -254,7 +258,8 @@ class TodoDetailDialog(tk.Toplevel):
 
         button_group = tk.Frame(header)
         button_group.pack(side="right")
-        tk.Button(button_group, text="✕", command=self.destroy, fg="#c0392b", bd=0, font=("Segoe UI", 14, "bold")).pack(side="left", padx=4)
+        tk.Button(button_group, text="删除", command=self._handle_delete, fg="#c0392b", bd=0, font=("Microsoft YaHei", 11, "bold")).pack(side="left", padx=4)
+        tk.Button(button_group, text="✕", command=self.destroy, fg="#7f8c8d", bd=0, font=("Segoe UI", 14, "bold")).pack(side="left", padx=4)
         tk.Button(button_group, text="✔", command=self._handle_confirm, fg="#27ae60", bd=0, font=("Segoe UI", 14, "bold")).pack(side="left")
 
     def _build_fields(self) -> None:
@@ -353,6 +358,143 @@ class TodoDetailDialog(tk.Toplevel):
         details_md = self.detail_editor.get("1.0", tk.END).strip()
         if self.on_confirm(status, due_value, details_md):
             self.destroy()
+
+    def _handle_delete(self) -> None:
+        if not messagebox.askyesno("删除确认", "确定要删除该待办吗？该操作不可恢复。"):
+            return
+        if self.on_delete():
+            self.destroy()
+
+
+class TodoCreateDialog(tk.Toplevel):
+    def __init__(self, master: tk.Tk, on_create: Callable[[str, Optional[datetime], str, bool], bool]) -> None:
+        super().__init__(master)
+        self.on_create = on_create
+        self.title("新建待办")
+        self.geometry("520x640")
+        self.minsize(520, 640)
+        self.config(padx=20, pady=20)
+        self.grab_set()
+
+        self.title_var = tk.StringVar()
+        default_due = (datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M")
+        self.due_var = tk.StringVar(value=default_due)
+        self.no_deadline_var = tk.BooleanVar(value=False)
+        self.completed_var = tk.BooleanVar(value=False)
+
+        self._build_create_header()
+        self._build_create_fields()
+        self._build_markdown_editor()
+
+    def _build_create_header(self) -> None:
+        header = tk.Frame(self)
+        header.pack(fill="x", pady=(0, 10))
+        tk.Label(header, text="新建待办", font=("Microsoft YaHei", 16, "bold")).pack(side="left")
+
+        buttons = tk.Frame(header)
+        buttons.pack(side="right")
+        tk.Button(buttons, text="✕", command=self.destroy, fg="#c0392b", bd=0, font=("Segoe UI", 14, "bold")).pack(side="left", padx=4)
+        tk.Button(buttons, text="✔", command=self._handle_create, fg="#27ae60", bd=0, font=("Segoe UI", 14, "bold")).pack(side="left")
+
+    def _build_create_fields(self) -> None:
+        wrapper = ttk.Frame(self)
+        wrapper.pack(fill="x", pady=(0, 12))
+        wrapper.columnconfigure(1, weight=1)
+
+        ttk.Label(wrapper, text="标题：", font=("Microsoft YaHei", 11)).grid(row=0, column=0, sticky="w", pady=4)
+        ttk.Entry(wrapper, textvariable=self.title_var).grid(row=0, column=1, sticky="we", pady=4)
+
+        ttk.Label(wrapper, text="截止时间 (YYYY-MM-DD HH:MM)：", font=("Microsoft YaHei", 11)).grid(row=1, column=0, columnspan=2, sticky="w", pady=(10, 4))
+        self.create_due_entry = ttk.Entry(wrapper, textvariable=self.due_var)
+        self.create_due_entry.grid(row=2, column=0, columnspan=2, sticky="we")
+
+        flag_row = ttk.Frame(wrapper)
+        flag_row.grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        ttk.Checkbutton(flag_row, text="永不截止", variable=self.no_deadline_var, command=self._toggle_create_due).pack(side="left", padx=(0, 15))
+        ttk.Checkbutton(flag_row, text="标记为完成", variable=self.completed_var).pack(side="left")
+
+        self._toggle_create_due()
+
+    def _build_markdown_editor(self) -> None:
+        self.md_section = ttk.Frame(self)
+        self.md_section.pack(fill="both", expand=True)
+
+        top = ttk.Frame(self.md_section)
+        top.pack(fill="x")
+        ttk.Label(top, text="详情 (Markdown)", font=("Microsoft YaHei", 11, "bold")).pack(side="left")
+        self.md_preview_btn = ttk.Button(top, text="查看预览", command=self._leave_md_edit, state=tk.DISABLED)
+        self.md_preview_btn.pack(side="right")
+        self.md_edit_btn = ttk.Button(top, text="编辑内容", command=self._enter_md_edit)
+        self.md_edit_btn.pack(side="right", padx=(0, 8))
+
+        self.md_editor = scrolledtext.ScrolledText(self.md_section, height=12, wrap="word")
+        self.md_editor.insert("1.0", "")
+
+        self.md_preview_frame = ttk.Frame(self.md_section)
+        self.md_preview_frame.pack(fill="both", expand=True, pady=(6, 0))
+        self.md_preview_frame.bind("<Double-Button-1>", self._enter_md_edit)
+        self.md_view = HTMLScrolledText(
+            self.md_preview_frame,
+            html=self._markdown_html(""),
+            width=60,
+            height=18,
+        )
+        self.md_view.pack(fill="both", expand=True)
+        self.md_view.bind("<Double-Button-1>", self._enter_md_edit)
+
+        self.md_editing = False
+
+    def _enter_md_edit(self, _event=None) -> None:
+        if self.md_editing:
+            return "break"
+        self.md_editing = True
+        self.md_preview_frame.pack_forget()
+        self.md_editor.pack(fill="both", expand=True, pady=(6, 0))
+        self.md_preview_btn.configure(state=tk.NORMAL)
+        return "break"
+
+    def _leave_md_edit(self) -> None:
+        if not self.md_editing:
+            return
+        self.md_view.set_html(self._markdown_html(self._current_md()))
+        self.md_editor.pack_forget()
+        self.md_preview_frame.pack(fill="both", expand=True, pady=(6, 0))
+        self.md_editing = False
+        self.md_preview_btn.configure(state=tk.DISABLED)
+
+    def _current_md(self) -> str:
+        return self.md_editor.get("1.0", tk.END).strip()
+
+    def _markdown_html(self, text: str) -> str:
+        return markdown(text or "暂无详情", extensions=["fenced_code", "tables"])
+
+    def _toggle_create_due(self) -> None:
+        state = "disabled" if self.no_deadline_var.get() else "normal"
+        self.create_due_entry.configure(state=state)
+
+    def _handle_create(self) -> None:
+        title = self.title_var.get().strip()
+        if not title:
+            messagebox.showerror("输入错误", "标题不能为空")
+            return
+
+        due_value: Optional[datetime] = None
+        if not self.no_deadline_var.get():
+            due_text = self.due_var.get().strip()
+            if due_text:
+                try:
+                    due_value = datetime.strptime(due_text, "%Y-%m-%d %H:%M")
+                except ValueError:
+                    messagebox.showerror("输入错误", "截止时间格式为 YYYY-MM-DD HH:MM")
+                    return
+
+        details = self._current_md()
+        completed = self.completed_var.get()
+
+        if self.on_create(title, due_value, details, completed):
+            self.destroy()
+
+
 class TodoApp:
     def __init__(self) -> None:
         ensure_schema()
@@ -366,6 +508,17 @@ class TodoApp:
         self.active_items: List[Todo] = []
         self.completed_items: List[Todo] = []
 
+        self.search_var = tk.StringVar()
+        self.status_var = tk.StringVar(value="全部")
+        self.due_start_var = tk.StringVar()
+        self.due_end_var = tk.StringVar()
+        self.status_mapping = {
+            "全部": "all",
+            "未完成": "pending",
+            "已完成": "completed",
+            "逾期": "overdue",
+        }
+
         self._build_layout()
         self.refresh_lists()
 
@@ -373,34 +526,85 @@ class TodoApp:
         # uniform keeps both columns equally wide even when resizing
         self.root.columnconfigure(0, weight=1, uniform="half")
         self.root.columnconfigure(1, weight=1, uniform="half")
-        self.root.rowconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=0)
+        self.root.rowconfigure(1, weight=1)
+
+        top_bar = ttk.Frame(self.root, padding=(20, 12))
+        top_bar.grid(row=0, column=0, columnspan=2, sticky="ew")
+        top_bar.columnconfigure(1, weight=3)
+        top_bar.columnconfigure(3, weight=1)
+        top_bar.columnconfigure(6, weight=1)
+
+        ttk.Label(top_bar, text="关键词", font=("Microsoft YaHei", 10, "bold")).grid(row=0, column=0, padx=(0, 8))
+        search_entry = ttk.Entry(top_bar, textvariable=self.search_var)
+        search_entry.grid(row=0, column=1, sticky="ew")
+        search_entry.bind("<Return>", self.refresh_lists)
+
+        ttk.Label(top_bar, text="状态", font=("Microsoft YaHei", 10)).grid(row=0, column=2, padx=(12, 6))
+        status_combo = ttk.Combobox(
+            top_bar,
+            textvariable=self.status_var,
+            values=list(self.status_mapping.keys()),
+            state="readonly",
+            width=10,
+        )
+        status_combo.grid(row=0, column=3, sticky="ew")
+        status_combo.current(0)
+
+        ttk.Button(top_bar, text="搜索", command=self.refresh_lists).grid(row=0, column=4, padx=(12, 6))
+        ttk.Button(top_bar, text="清除", command=self._reset_filters).grid(row=0, column=5, padx=(0, 6))
+        ttk.Button(top_bar, text="+", width=3, command=self._open_create_dialog).grid(row=0, column=7, sticky="e")
+
+        date_row = ttk.Frame(top_bar)
+        date_row.grid(row=1, column=0, columnspan=8, sticky="ew", pady=(8, 0))
+        date_row.columnconfigure(1, weight=1)
+        date_row.columnconfigure(3, weight=1)
+
+        ttk.Label(date_row, text="截止自", font=("Microsoft YaHei", 10)).grid(row=0, column=0, padx=(0, 6))
+        start_entry = ttk.Entry(date_row, textvariable=self.due_start_var)
+        start_entry.grid(row=0, column=1, sticky="ew")
+        start_entry.bind("<Return>", self.refresh_lists)
+
+        ttk.Label(date_row, text="至", font=("Microsoft YaHei", 10)).grid(row=0, column=2, padx=6)
+        end_entry = ttk.Entry(date_row, textvariable=self.due_end_var)
+        end_entry.grid(row=0, column=3, sticky="ew")
+        end_entry.bind("<Return>", self.refresh_lists)
 
         left_frame = ttk.Frame(self.root, padding=20)
-        left_frame.grid(row=0, column=0, sticky="nsew")
+        left_frame.grid(row=1, column=0, sticky="nsew")
         left_frame.columnconfigure(0, weight=1)
         left_frame.rowconfigure(0, weight=1)
 
         right_frame = ttk.Frame(self.root, padding=20)
-        right_frame.grid(row=0, column=1, sticky="nsew")
+        right_frame.grid(row=1, column=1, sticky="nsew")
         right_frame.columnconfigure(0, weight=1)
         right_frame.rowconfigure(0, weight=1)
 
-        self.active_panel = TodoListPanel(left_frame, "未完成", self.mark_complete, self._open_detail, accent="#2980b9")
-        self.active_panel.frame.grid(row=0, column=0, sticky="nsew")
+        header_left = ttk.Frame(left_frame)
+        header_left.grid(row=0, column=0, sticky="nsew")
+        header_left.columnconfigure(0, weight=1)
+        header_left.rowconfigure(1, weight=1)
+
+        list_header = ttk.Frame(header_left)
+        list_header.grid(row=0, column=0, sticky="ew")
+        list_header.columnconfigure(0, weight=1)
+
+        ttk.Label(list_header, text="未完成", font=("Microsoft YaHei", 14, "bold"), foreground="#2980b9").grid(row=0, column=0, sticky="w")
+
+        self.active_panel = TodoListPanel(header_left, "", self.mark_complete, self._open_detail, accent="#2980b9")
+        self.active_panel.frame.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
 
         self.completed_panel = TodoListPanel(right_frame, "已完成", self.mark_pending, self._open_detail, accent="#27ae60")
         self.completed_panel.frame.grid(row=0, column=0, sticky="nsew")
 
-    def refresh_lists(self) -> None:
+    def refresh_lists(self, *_args) -> None:
+        query_bundle = self._build_filter_query()
+        if query_bundle is None:
+            return
+        query, params = query_bundle
         try:
             cursor = self.conn.cursor(dictionary=True)
-            cursor.execute(
-                """
-                SELECT id, title, details, due_at, status
-                FROM todos
-                ORDER BY status = 'completed', due_at IS NULL, due_at
-                """
-            )
+            cursor.execute(query, params)
             records = cursor.fetchall()
             cursor.close()
         except mysql.connector.Error as exc:
@@ -437,12 +641,39 @@ class TodoApp:
         self._update_status(todo.todo_id, "pending")
         self.refresh_lists()
 
+    def _open_create_dialog(self) -> None:
+        TodoCreateDialog(self.root, self._create_todo)
+
     def _open_detail(self, todo: Todo) -> None:
         TodoDetailDialog(
             self.root,
             todo,
             lambda status, due, details: self._apply_detail_change(todo, status, due, details),
+            lambda: self._delete_todo(todo),
         )
+
+    def _reset_filters(self) -> None:
+        self.search_var.set("")
+        self.status_var.set("全部")
+        self.due_start_var.set("")
+        self.due_end_var.set("")
+        self.refresh_lists()
+
+    def _create_todo(self, title: str, due_at: Optional[datetime], details: str, completed: bool) -> bool:
+        status = "completed" if completed else "pending"
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "INSERT INTO todos (title, details, due_at, status) VALUES (%s, %s, %s, %s)",
+                (title, details, due_at, status),
+            )
+            self.conn.commit()
+            cursor.close()
+        except mysql.connector.Error as exc:
+            messagebox.showerror("数据库错误", f"无法创建待办：{exc}")
+            return False
+        self.refresh_lists()
+        return True
 
     def _apply_detail_change(self, todo: Todo, status: str, due: Optional[datetime], details: str) -> bool:
         try:
@@ -458,6 +689,63 @@ class TodoApp:
             return False
         self.refresh_lists()
         return True
+
+    def _delete_todo(self, todo: Todo) -> bool:
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("DELETE FROM todos WHERE id=%s", (todo.todo_id,))
+            self.conn.commit()
+            cursor.close()
+        except mysql.connector.Error as exc:
+            messagebox.showerror("数据库错误", f"无法删除待办：{exc}")
+            return False
+        self.refresh_lists()
+        return True
+
+    def _build_filter_query(self) -> Optional[Tuple[str, List[object]]]:
+        query = (
+            "SELECT id, title, details, due_at, status FROM todos WHERE 1=1 "
+        )
+        params: List[object] = []
+
+        search_term = self.search_var.get().strip()
+        if search_term:
+            like = f"%{search_term}%"
+            query += "AND (title LIKE %s OR details LIKE %s) "
+            params.extend([like, like])
+
+        status_value = self.status_mapping.get(self.status_var.get(), "all")
+        now = datetime.now()
+        if status_value == "pending":
+            query += "AND status = 'pending' "
+        elif status_value == "completed":
+            query += "AND status = 'completed' "
+        elif status_value == "overdue":
+            query += "AND status = 'pending' AND due_at IS NOT NULL AND due_at < %s "
+            params.append(now)
+
+        start_text = self.due_start_var.get().strip()
+        if start_text:
+            try:
+                start_dt = datetime.strptime(start_text, "%Y-%m-%d %H:%M")
+            except ValueError:
+                messagebox.showerror("输入错误", "开始时间格式应为 YYYY-MM-DD HH:MM")
+                return None
+            query += "AND due_at IS NOT NULL AND due_at >= %s "
+            params.append(start_dt)
+
+        end_text = self.due_end_var.get().strip()
+        if end_text:
+            try:
+                end_dt = datetime.strptime(end_text, "%Y-%m-%d %H:%M")
+            except ValueError:
+                messagebox.showerror("输入错误", "结束时间格式应为 YYYY-MM-DD HH:MM")
+                return None
+            query += "AND due_at IS NOT NULL AND due_at <= %s "
+            params.append(end_dt)
+
+        query += "ORDER BY status = 'completed', due_at IS NULL, due_at"
+        return query, params
 
     def _update_status(self, todo_id: int, status: str) -> None:
         try:
