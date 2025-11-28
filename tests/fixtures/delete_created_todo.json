@@ -1,0 +1,15 @@
+{
+  "description": "Delete the todo that was just updated",
+  "request": {
+    "action": "delete",
+    "data": {
+      "id": {"$ref": "data.id"}
+    }
+  },
+  "expect": {
+    "status": "ok",
+    "data": {
+      "deleted": 1
+    }
+  }
+}

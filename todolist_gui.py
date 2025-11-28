@@ -13,13 +13,7 @@ from markdown import markdown
 from tkhtmlview import HTMLScrolledText
 from tkinter import scrolledtext
 
-DB_CONFIG = {
-    "host": "localhost",
-    "user": "DSL-TodoListUser",
-    "password": "qwertyui793789",
-    "database": "DSL-TodoList",
-    "auth_plugin": "mysql_native_password",
-}
+from db_utils import ensure_schema, get_connection
 
 
 @dataclass
@@ -29,31 +23,6 @@ class Todo:
     details: Optional[str]
     due_at: Optional[datetime]
     status: str
-
-
-def ensure_schema() -> None:
-    conn = mysql.connector.connect(**DB_CONFIG)
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS todos (
-            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            title VARCHAR(200) NOT NULL,
-            details TEXT NULL,
-            due_at DATETIME NULL,
-            status ENUM('pending','completed') NOT NULL DEFAULT 'pending',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            INDEX idx_due_at(due_at),
-            INDEX idx_status(status)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        """
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-
 class TodoListPanel:
     def __init__(
         self,
@@ -498,7 +467,7 @@ class TodoCreateDialog(tk.Toplevel):
 class TodoApp:
     def __init__(self) -> None:
         ensure_schema()
-        self.conn = mysql.connector.connect(**DB_CONFIG)
+        self.conn = get_connection()
 
         self.root = tk.Tk()
         self.root.title("DSL Todo List")

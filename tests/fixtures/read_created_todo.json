@@ -1,0 +1,17 @@
+{
+  "description": "Read the todo created in the previous step",
+  "request": {
+    "action": "read",
+    "data": {
+      "id": {"$ref": "data.id"}
+    }
+  },
+  "expect": {
+    "status": "ok",
+    "data": {
+      "id": {"$ref": "data.id"},
+      "title": "CLI flow task",
+      "status": "pending"
+    }
+  }
+}
