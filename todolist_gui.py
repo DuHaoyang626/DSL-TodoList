@@ -1,6 +1,7 @@
-"""Simple GUI to view and manage todos stored in MySQL."""
+"""Simple GUI to view and manage todos stored in MySQL via JSON API."""
 from __future__ import annotations
 
+import json
 import tkinter as tk
 from datetime import datetime, timedelta
 from dataclasses import dataclass
@@ -8,12 +9,14 @@ from typing import Callable, List, Optional, Tuple
 from math import ceil
 
 from tkinter import messagebox, ttk
-import mysql.connector
 from markdown import markdown
 from tkhtmlview import HTMLScrolledText
 from tkinter import scrolledtext
 
-from db_utils import ensure_schema, get_connection
+from db_utils import ensure_schema
+from json_api import handle_json_request
+
+DATETIME_FMT = "%Y-%m-%d %H:%M"
 
 
 @dataclass
@@ -467,7 +470,6 @@ class TodoCreateDialog(tk.Toplevel):
 class TodoApp:
     def __init__(self) -> None:
         ensure_schema()
-        self.conn = get_connection()
 
         self.root = tk.Tk()
         self.root.title("DSL Todo List")
@@ -567,17 +569,13 @@ class TodoApp:
         self.completed_panel.frame.grid(row=0, column=0, sticky="nsew")
 
     def refresh_lists(self, *_args) -> None:
-        query_bundle = self._build_filter_query()
-        if query_bundle is None:
+        filter_payload = self._build_filter_payload()
+        if filter_payload is None:
             return
-        query, params = query_bundle
         try:
-            cursor = self.conn.cursor(dictionary=True)
-            cursor.execute(query, params)
-            records = cursor.fetchall()
-            cursor.close()
-        except mysql.connector.Error as exc:
-            messagebox.showerror("数据库错误", f"无法查询数据: {exc}")
+            records = self._call_api("list", filter_payload)
+        except RuntimeError as exc:
+            messagebox.showerror("接口错误", f"无法查询数据: {exc}")
             return
 
         now = datetime.now()
@@ -585,11 +583,12 @@ class TodoApp:
         self.completed_items = []
 
         for row in records:
+            due_value = datetime.strptime(row["due_at"], DATETIME_FMT) if row.get("due_at") else None
             todo = Todo(
                 todo_id=row["id"],
                 title=row["title"],
                 details=row.get("details"),
-                due_at=row.get("due_at"),
+                due_at=due_value,
                 status=row["status"],
             )
             if todo.status == "completed":
@@ -630,106 +629,90 @@ class TodoApp:
 
     def _create_todo(self, title: str, due_at: Optional[datetime], details: str, completed: bool) -> bool:
         status = "completed" if completed else "pending"
+        payload = {
+            "title": title,
+            "details": details or None,
+            "due_at": due_at.strftime(DATETIME_FMT) if due_at else None,
+            "status": status,
+        }
         try:
-            cursor = self.conn.cursor()
-            cursor.execute(
-                "INSERT INTO todos (title, details, due_at, status) VALUES (%s, %s, %s, %s)",
-                (title, details, due_at, status),
-            )
-            self.conn.commit()
-            cursor.close()
-        except mysql.connector.Error as exc:
-            messagebox.showerror("数据库错误", f"无法创建待办：{exc}")
+            self._call_api("create", payload)
+        except RuntimeError as exc:
+            messagebox.showerror("接口错误", f"无法创建待办：{exc}")
             return False
         self.refresh_lists()
         return True
 
     def _apply_detail_change(self, todo: Todo, status: str, due: Optional[datetime], details: str) -> bool:
+        payload = {
+            "id": todo.todo_id,
+            "status": status,
+            "details": details,
+            "due_at": due.strftime(DATETIME_FMT) if due else None,
+        }
         try:
-            cursor = self.conn.cursor()
-            cursor.execute(
-                "UPDATE todos SET status=%s, due_at=%s, details=%s WHERE id=%s",
-                (status, due, details, todo.todo_id),
-            )
-            self.conn.commit()
-            cursor.close()
-        except mysql.connector.Error as exc:
-            messagebox.showerror("数据库错误", f"无法更新待办：{exc}")
+            self._call_api("update", payload)
+        except RuntimeError as exc:
+            messagebox.showerror("接口错误", f"无法更新待办：{exc}")
             return False
         self.refresh_lists()
         return True
 
     def _delete_todo(self, todo: Todo) -> bool:
         try:
-            cursor = self.conn.cursor()
-            cursor.execute("DELETE FROM todos WHERE id=%s", (todo.todo_id,))
-            self.conn.commit()
-            cursor.close()
-        except mysql.connector.Error as exc:
-            messagebox.showerror("数据库错误", f"无法删除待办：{exc}")
+            self._call_api("delete", {"id": todo.todo_id})
+        except RuntimeError as exc:
+            messagebox.showerror("接口错误", f"无法删除待办：{exc}")
             return False
         self.refresh_lists()
         return True
 
-    def _build_filter_query(self) -> Optional[Tuple[str, List[object]]]:
-        query = (
-            "SELECT id, title, details, due_at, status FROM todos WHERE 1=1 "
-        )
-        params: List[object] = []
+    def _build_filter_payload(self) -> Optional[dict]:
+        payload: dict = {}
 
         search_term = self.search_var.get().strip()
         if search_term:
-            like = f"%{search_term}%"
-            query += "AND (title LIKE %s OR details LIKE %s) "
-            params.extend([like, like])
+            payload["keyword"] = search_term
 
         status_value = self.status_mapping.get(self.status_var.get(), "all")
-        now = datetime.now()
-        if status_value == "pending":
-            query += "AND status = 'pending' "
-        elif status_value == "completed":
-            query += "AND status = 'completed' "
-        elif status_value == "overdue":
-            query += "AND status = 'pending' AND due_at IS NOT NULL AND due_at < %s "
-            params.append(now)
+        if status_value != "all":
+            payload["status"] = status_value
 
         start_text = self.due_start_var.get().strip()
         if start_text:
             try:
-                start_dt = datetime.strptime(start_text, "%Y-%m-%d %H:%M")
+                datetime.strptime(start_text, DATETIME_FMT)
             except ValueError:
                 messagebox.showerror("输入错误", "开始时间格式应为 YYYY-MM-DD HH:MM")
                 return None
-            query += "AND due_at IS NOT NULL AND due_at >= %s "
-            params.append(start_dt)
+            payload["due_from"] = start_text
 
         end_text = self.due_end_var.get().strip()
         if end_text:
             try:
-                end_dt = datetime.strptime(end_text, "%Y-%m-%d %H:%M")
+                datetime.strptime(end_text, DATETIME_FMT)
             except ValueError:
                 messagebox.showerror("输入错误", "结束时间格式应为 YYYY-MM-DD HH:MM")
                 return None
-            query += "AND due_at IS NOT NULL AND due_at <= %s "
-            params.append(end_dt)
+            payload["due_to"] = end_text
 
-        query += "ORDER BY status = 'completed', due_at IS NULL, due_at"
-        return query, params
+        return payload
 
     def _update_status(self, todo_id: int, status: str) -> None:
         try:
-            cursor = self.conn.cursor()
-            cursor.execute("UPDATE todos SET status=%s WHERE id=%s", (status, todo_id))
-            self.conn.commit()
-            cursor.close()
-        except mysql.connector.Error as exc:
-            messagebox.showerror("数据库错误", f"无法更新状态: {exc}")
+            self._call_api("update", {"id": todo_id, "status": status})
+        except RuntimeError as exc:
+            messagebox.showerror("接口错误", f"无法更新状态: {exc}")
 
     def run(self) -> None:
-        try:
-            self.root.mainloop()
-        finally:
-            self.conn.close()
+        self.root.mainloop()
+
+    def _call_api(self, action: str, data: dict):
+        payload = json.dumps({"action": action, "data": data}, ensure_ascii=False)
+        response = json.loads(handle_json_request(payload))
+        if response.get("status") != "ok":
+            raise RuntimeError(response.get("message", "未知错误"))
+        return response.get("data")
 
 
 if __name__ == "__main__":
