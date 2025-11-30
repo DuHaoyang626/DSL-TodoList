@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import mysql.connector
 
-from db_utils import ensure_schema, get_connection
+from .db import ensure_schema, get_connection
 
 DATETIME_FMT = "%Y-%m-%d %H:%M"
 VALID_STATUS = {"pending", "completed"}

@@ -17,8 +17,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from db_utils import ensure_schema
-from json_api import handle_json_request
+from dsl_todolist.db import ensure_schema
+from dsl_todolist.api import handle_json_request
 
 
 def main() -> None:
