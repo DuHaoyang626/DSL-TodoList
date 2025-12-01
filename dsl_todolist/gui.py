@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import tkinter as tk
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -13,6 +14,7 @@ from tkhtmlview import HTMLScrolledText
 from tkinter import messagebox, scrolledtext, ttk
 
 from .api import handle_json_request
+from .assistant import AssistantResult, TodoAssistant
 from .db import ensure_schema
 
 DATETIME_FMT = "%Y-%m-%d %H:%M"
@@ -186,6 +188,103 @@ class TodoTile(tk.Frame):
             return (f"剩余 {hours} 小时", "#f1c40f", "#2c3e50")
         days = hours // 24
         return (f"剩余 {days} 天", "#ffffff", "#2c3e50")
+
+
+class AssistantChatPanel:
+    """Right-side chat panel that proxies NL requests to the Todo assistant."""
+
+    def __init__(
+        self,
+        master: tk.Widget,
+        assistant: TodoAssistant,
+        on_operation_applied: Callable[[], None],
+    ) -> None:
+        self.assistant = assistant
+        self.on_operation_applied = on_operation_applied
+
+        self.frame = ttk.Frame(master)
+        self.frame.columnconfigure(0, weight=1)
+        self.frame.rowconfigure(1, weight=1)
+
+        header = ttk.Frame(self.frame)
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        header.columnconfigure(0, weight=1)
+        ttk.Label(header, text="Copilot 助手", font=("Microsoft YaHei", 14, "bold")).grid(row=0, column=0, sticky="w")
+
+        self.chat_display = scrolledtext.ScrolledText(
+            self.frame,
+            wrap="word",
+            state=tk.DISABLED,
+            font=("Microsoft YaHei", 10),
+        )
+        self.chat_display.grid(row=1, column=0, sticky="nsew")
+
+        input_frame = ttk.Frame(self.frame)
+        input_frame.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        input_frame.columnconfigure(0, weight=1)
+
+        self.input_box = tk.Text(input_frame, height=4, wrap="word")
+        self.input_box.grid(row=0, column=0, sticky="ew")
+        self.input_box.bind("<Control-Return>", self._on_send_event)
+
+        button_column = ttk.Frame(input_frame)
+        button_column.grid(row=0, column=1, padx=(8, 0), sticky="ns")
+        self.send_button = ttk.Button(button_column, text="发送", command=self._on_send_click, width=8)
+        self.send_button.pack(fill="x")
+        self.status_var = tk.StringVar(value="")
+        ttk.Label(button_column, textvariable=self.status_var, foreground="#7f8c8d").pack(pady=(6, 0))
+
+        self._append_message("助手", "你好！请用自然语言描述想要执行的待办操作。")
+
+    def _append_message(self, role: str, message: str) -> None:
+        self.chat_display.configure(state=tk.NORMAL)
+        self.chat_display.insert(tk.END, f"[{role}] {message}\n\n")
+        self.chat_display.configure(state=tk.DISABLED)
+        self.chat_display.see(tk.END)
+
+    def _on_send_event(self, _event=None):  # type: ignore[override]
+        self._on_send_click()
+        return "break"
+
+    def _on_send_click(self) -> None:
+        text = self.input_box.get("1.0", tk.END).strip()
+        if not text:
+            return
+        self.input_box.delete("1.0", tk.END)
+        self._append_message("用户", text)
+        self._set_busy(True)
+        worker = threading.Thread(target=self._process_message, args=(text,), daemon=True)
+        worker.start()
+
+    def _process_message(self, text: str) -> None:
+        try:
+            result = self.assistant.run_instruction(text, apply_changes=True)
+        except Exception as exc:  # noqa: BLE001 - surface raw error text for clarity
+            self.frame.after(0, lambda: self._handle_error(str(exc)))
+            return
+        self.frame.after(0, lambda: self._handle_success(result))
+
+    def _handle_success(self, result: AssistantResult) -> None:
+        self._append_message("助手", result.summary)
+        self._set_busy(False)
+        self.status_var.set("已完成")
+        self.frame.after(0, self.on_operation_applied)
+
+    def _handle_error(self, message: str) -> None:
+        self._append_message("系统", f"请求失败：{message}")
+        self._set_busy(False)
+        self.status_var.set("发送失败")
+
+    def _set_busy(self, is_busy: bool) -> None:
+        state = tk.DISABLED if is_busy else tk.NORMAL
+        self.send_button.configure(state=tk.NORMAL if not is_busy else tk.DISABLED)
+        self.input_box.configure(state=state)
+        if not is_busy:
+            self.input_box.configure(state=tk.NORMAL)
+            self.input_box.focus_set()
+            self.status_var.set("")
+        else:
+            self.status_var.set("处理中…")
 
 
 class TodoDetailDialog(tk.Toplevel):
@@ -500,8 +599,8 @@ class TodoApp:
 
         self.root = tk.Tk()
         self.root.title("DSL Todo List")
-        self.root.geometry("1100x640")
-        self.root.minsize(960, 540)
+        self.root.geometry("1400x700")
+        self.root.minsize(1100, 600)
 
         self.active_items: List[Todo] = []
         self.completed_items: List[Todo] = []
@@ -517,17 +616,30 @@ class TodoApp:
             "逾期": "overdue",
         }
 
+        self.assistant = TodoAssistant()
+
         self._build_layout()
         self.refresh_lists()
 
     def _build_layout(self) -> None:
-        self.root.columnconfigure(0, weight=1, uniform="half")
-        self.root.columnconfigure(1, weight=1, uniform="half")
+        self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=0)
         self.root.rowconfigure(1, weight=1)
 
-        top_bar = ttk.Frame(self.root, padding=(20, 12))
-        top_bar.grid(row=0, column=0, columnspan=2, sticky="ew")
+        paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
+        paned.grid(row=1, column=0, sticky="nsew")
+
+        left_container = ttk.Frame(paned)
+        left_container.columnconfigure(0, weight=1)
+        left_container.rowconfigure(1, weight=1)
+        assistant_wrapper = ttk.Frame(paned, padding=16)
+        assistant_wrapper.columnconfigure(0, weight=1)
+        assistant_wrapper.rowconfigure(0, weight=1)
+        paned.add(left_container, weight=3)
+        paned.add(assistant_wrapper, weight=1)
+
+        top_bar = ttk.Frame(left_container, padding=(20, 12))
+        top_bar.grid(row=0, column=0, sticky="ew")
         top_bar.columnconfigure(1, weight=3)
         top_bar.columnconfigure(3, weight=1)
         top_bar.columnconfigure(6, weight=1)
@@ -567,17 +679,23 @@ class TodoApp:
         end_entry.grid(row=0, column=3, sticky="ew")
         end_entry.bind("<Return>", self.refresh_lists)
 
-        left_frame = ttk.Frame(self.root, padding=20)
-        left_frame.grid(row=1, column=0, sticky="nsew")
-        left_frame.columnconfigure(0, weight=1)
-        left_frame.rowconfigure(0, weight=1)
+        list_area = ttk.Frame(left_container)
+        list_area.grid(row=1, column=0, sticky="nsew")
+        list_area.columnconfigure(0, weight=1, uniform="todo")
+        list_area.columnconfigure(1, weight=1, uniform="todo")
+        list_area.rowconfigure(0, weight=1)
 
-        right_frame = ttk.Frame(self.root, padding=20)
-        right_frame.grid(row=1, column=1, sticky="nsew")
-        right_frame.columnconfigure(0, weight=1)
-        right_frame.rowconfigure(0, weight=1)
+        active_wrapper = ttk.Frame(list_area, padding=20)
+        active_wrapper.grid(row=0, column=0, sticky="nsew")
+        active_wrapper.columnconfigure(0, weight=1)
+        active_wrapper.rowconfigure(0, weight=1)
 
-        header_left = ttk.Frame(left_frame)
+        completed_wrapper = ttk.Frame(list_area, padding=20)
+        completed_wrapper.grid(row=0, column=1, sticky="nsew")
+        completed_wrapper.columnconfigure(0, weight=1)
+        completed_wrapper.rowconfigure(0, weight=1)
+
+        header_left = ttk.Frame(active_wrapper)
         header_left.grid(row=0, column=0, sticky="nsew")
         header_left.columnconfigure(0, weight=1)
         header_left.rowconfigure(1, weight=1)
@@ -595,8 +713,18 @@ class TodoApp:
         self.active_panel = TodoListPanel(header_left, "", self.mark_complete, self._open_detail, accent="#2980b9")
         self.active_panel.frame.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
 
-        self.completed_panel = TodoListPanel(right_frame, "已完成", self.mark_pending, self._open_detail, accent="#27ae60")
+        self.completed_panel = TodoListPanel(
+            completed_wrapper,
+            "已完成",
+            self.mark_pending,
+            self._open_detail,
+            accent="#27ae60",
+        )
         self.completed_panel.frame.grid(row=0, column=0, sticky="nsew")
+
+        assistant_panel = AssistantChatPanel(assistant_wrapper, self.assistant, self.refresh_lists)
+        assistant_panel.frame.grid(row=0, column=0, sticky="nsew")
+        self.assistant_panel = assistant_panel
 
     def refresh_lists(self, *_args) -> None:
         filter_payload = self._build_filter_payload()
@@ -740,6 +868,10 @@ class TodoApp:
     def _call_api(self, action: str, data: dict):
         payload = json.dumps({"action": action, "data": data}, ensure_ascii=False)
         response = json.loads(handle_json_request(payload))
+        print("\n=== API 调用 (GUI) ===")
+        print(json.dumps({"action": action, "data": data}, ensure_ascii=False, indent=2))
+        print("=== API 结果 ===")
+        print(json.dumps(response, ensure_ascii=False, indent=2))
         if response.get("status") != "ok":
             raise RuntimeError(response.get("message", "未知错误"))
         return response.get("data")
