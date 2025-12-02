@@ -35,6 +35,15 @@ PROMPT_FILES = {
 ALLOWED_ACTIONS = {"create", "read", "update", "delete", "list", "noop"}
 
 
+MODEL_PROVIDER = "deepseek"  # options: "ollama" or "deepseek"
+
+# Deepseek / online model configuration (set your API key and model here)
+# WARNING: storing API keys in source is insecure for production. This follows your request.
+DEEPSEEK_API_KEY = "sk-75962c66cc36455ea3a33af41297456a"
+DEEPSEEK_MODEL = "deepseek-chat"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+
+
 @dataclass
 class AssistantResult:
     """Structured result returned by the Todo assistant."""
@@ -212,23 +221,64 @@ class TodoAssistant:
         return json.dumps(context, ensure_ascii=False, indent=2)
 
     def _call_model(self, prompt: str) -> str:
-        payload = {"model": self.model_name, "prompt": prompt, "stream": False}
-        start = time.perf_counter()
-        try:
-            response = requests.post(self.endpoint, json=payload, timeout=self.timeout)
-            response.raise_for_status()
-        except requests.RequestException as exc:
-            raise RuntimeError(f"调用大模型失败: {exc}") from exc
+        # Branch by provider so switching is a single-constant change.
+        provider = MODEL_PROVIDER.lower() if isinstance(MODEL_PROVIDER, str) else "ollama"
+        if provider == "ollama":
+            payload = {"model": self.model_name, "prompt": prompt, "stream": False}
+            start = time.perf_counter()
+            try:
+                response = requests.post(self.endpoint, json=payload, timeout=self.timeout)
+                response.raise_for_status()
+            except requests.RequestException as exc:
+                raise RuntimeError(f"调用本地 Ollama 失败: {exc}") from exc
 
-        duration = time.perf_counter() - start
-        body: Dict[str, Any] = response.json()
-        print("\n=== LLM Prompt ===")
-        print(prompt)
-        print(f"=== LLM 耗时: {duration:.2f} 秒 ===")
-        raw_response = body.get("response", "")
-        print("=== LLM Response ===")
-        print(raw_response)
-        return raw_response
+            duration = time.perf_counter() - start
+            body: Dict[str, Any] = response.json()
+            print("\n=== LLM Prompt (ollama) ===")
+            print(prompt)
+            print(f"=== LLM 耗时: {duration:.2f} 秒 ===")
+            raw_response = body.get("response", "")
+            print("=== LLM Response ===")
+            print(raw_response)
+            return raw_response
+
+        if provider == "deepseek":
+            # Use OpenAI-compatible SDK (user must install `openai` and set DEEPSEEK_API_KEY)
+            try:
+                from openai import OpenAI
+            except Exception as exc:  # pragma: no cover - runtime dependency
+                raise RuntimeError("缺少 openai SDK。请运行: pip install openai") from exc
+
+            api_key = DEEPSEEK_API_KEY
+            if not api_key or api_key.startswith("<PUT_"):
+                raise RuntimeError("请在代码中将 DEEPSEEK_API_KEY 设置为有效的 Deepseek API Key（不要使用环境变量）。")
+
+            client = OpenAI(api_key=api_key, base_url=DEEPSEEK_BASE_URL)
+
+            # Build a short chat-style conversation. The DSL prompt becomes the user's message.
+            messages = [
+                {"role": "system", "content": "你是一个 TodoList 智能助手，输出仅为符合规范的 JSON。"},
+                {"role": "user", "content": prompt},
+            ]
+            try:
+                resp = client.chat.completions.create(model=DEEPSEEK_MODEL, messages=messages, stream=False)
+            except Exception as exc:
+                raise RuntimeError(f"调用 Deepseek API 失败: {exc}") from exc
+
+            # resp.choices[0].message.content expected per the SDK example
+            try:
+                content = resp.choices[0].message.content
+            except Exception:
+                # Fallback: try to stringify response
+                content = str(resp)
+
+            print("\n=== LLM Prompt (deepseek) ===")
+            print(prompt)
+            print("=== LLM Response ===")
+            print(content)
+            return content
+
+        raise RuntimeError(f"未知的模型提供者: {MODEL_PROVIDER}")
 
     def _extract_json(self, text: str) -> Optional[Dict[str, Any]]:
         match = re.search(r"\{[\s\S]*\}", text)
