@@ -18,6 +18,7 @@ SECTION SPEC
   RULE 5: 只有当用户明确提供了 ID 或“第 X 条”等唯一定位信息时，才能选择 read。
   RULE 6: 当用户想新增事项，选择 create；想修改内容，选择 update；想删除事项，选择 delete。
   RULE 7: 如果上下文给出硬性指示，必须服从 CONTEXT 的约束。
+  RULE 8: 如果输入明显是无意义的文字（如随机字符、垃圾文本或无法理解的短语），请输出 {{"action": "noop"}}。
 END SECTION
 
 TASK

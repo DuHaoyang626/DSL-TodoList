@@ -32,7 +32,7 @@ PROMPT_FILES = {
     "update_request": PROMPT_DIR / "update_request.dsl",
     "update_select": PROMPT_DIR / "update_select.dsl",
 }
-ALLOWED_ACTIONS = {"create", "read", "update", "delete", "list"}
+ALLOWED_ACTIONS = {"create", "read", "update", "delete", "list", "noop"}
 
 
 @dataclass
@@ -66,13 +66,18 @@ class TodoAssistant:
 
         operation, summary = self._nl_to_todo_operation(nl_text)
         api_response: Optional[Dict[str, Any]] = None
-        if apply_changes:
+        # 如果路由返回 noop，表示输入无意义，前端仅展示 summary，不执行任何 API 操作
+        if apply_changes and operation.get("action") != "noop":
             api_response = self._execute_operation(operation)
         return AssistantResult(operation=operation, summary=summary, api_response=api_response)
 
     # ==== Core flow ========================================================
     def _nl_to_todo_operation(self, nl_text: str) -> Tuple[Dict[str, Any], str]:
         action = self._route_action(nl_text)
+        # special-case noop: router determined input is meaningless
+        if action == "noop":
+            operation = {"action": "noop", "data": {}, "summary": "无意义的操作"}
+            return operation, operation["summary"]
         if action == "create":
             operation = self._run_operation_prompt("create", nl_text, expected_action="create")
         elif action == "list":
