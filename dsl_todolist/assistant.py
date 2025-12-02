@@ -6,6 +6,7 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -20,29 +21,7 @@ DEFAULT_MODEL = "qwen3:4b"
 # DEFAULT_MODEL = "qwen3:4b"
 # DEFAULT_MODEL = "llama3.2:3b"
 
-PROMPT_TEMPLATE = """你是一个 TodoList 智能助手，需要输出符合 DSL-TodoList 项目所需结构的 JSON。
-
-当前的真实日期和时间是 {current_time}（24 小时制，UTC+8）。如果指令中提及了相对时间，请结合这个时间点进行解析。
-
-输出要求：
-1. JSON 顶层必须包含 action、data、summary 三个字段。
-2. action 只允许 "create"、"read"、"update"、"delete"、"list"。
-3. data 字段根据 action 自动调整。例如：
-   - create: {{"title": str, "details": str|null, "due_at": "YYYY-MM-DD HH:MM"|null, "status": "pending"|"completed"}}
-   - read/delete: {{"id": 正整数}}
-   - update: {{"id": 正整数, 其他可选字段同 create}}
-   - list: 可包含 keyword、status、due_from、due_to。
-4. summary 是一句 20 字以内的中文概括，描述该操作的目的或结果。
-5. 如果无截止时间，用 null。
-6. 只返回 JSON，不要任何解释文字、反引号或 Markdown。
-7. 如果你需要删除/更新但无法确认具体 id，可以先返回一个 action 为 "list" 的 JSON，说明筛选条件。
-8. 当补充上下文提供了候选待办列表时，必须基于这些候选生成最终 JSON，并且 id 必须来自列表。
-
-{context_block}
-
-请根据以下自然语言指令生成 JSON：
-{instruction}
-"""
+PROMPT_FILE = Path(__file__).resolve().parent / "prompts" / "todo_prompt.dsl"
 
 
 @dataclass
@@ -69,6 +48,7 @@ class TodoAssistant:
         self.endpoint = endpoint
         self.timeout = timeout
         self.verbose = verbose
+        self._prompt_template: Optional[str] = None
 
     def run_instruction(self, nl_text: str, *, apply_changes: bool = True) -> AssistantResult:
         """Convert NL text into a JSON operation and optionally execute it."""
@@ -123,23 +103,33 @@ class TodoAssistant:
         now_str = now.strftime("%Y-%m-%d %H:%M")
         weekday_map = ["一", "二", "三", "四", "五", "六", "日"]
         weekday_str = f"今天是星期{weekday_map[now.weekday()]}"
-        context_block = ""
-        if context:
-            request_str = json.dumps(context.get("list_request"), ensure_ascii=False, indent=2)
-            candidates_str = json.dumps(context.get("candidates"), ensure_ascii=False, indent=2)
-            context_block = (
-                "\n=== 补充上下文 ===\n"
-                "你先前的列表请求：\n"
-                f"{request_str}\n"
-                "根据该条件得到的候选待办（JSON 数组）：\n"
-                f"{candidates_str}\n"
-                "请仅从这些候选中挑选合适的 id 来完成最终操作。\n"
-            )
-
-        return PROMPT_TEMPLATE.format(
+        context_block = self._format_context_block(context)
+        template = self._load_prompt_template()
+        return template.format(
             current_time=f"{now_str}，{weekday_str}",
             instruction=nl_text.strip(),
             context_block=context_block,
+        )
+
+    def _load_prompt_template(self) -> str:
+        if self._prompt_template is None:
+            if not PROMPT_FILE.exists():
+                raise FileNotFoundError(f"未找到 DSL 提示词文件: {PROMPT_FILE}")
+            self._prompt_template = PROMPT_FILE.read_text(encoding="utf-8")
+        return self._prompt_template
+
+    def _format_context_block(self, context: Optional[Dict[str, Any]]) -> str:
+        if not context:
+            return "无补充上下文"
+        request_str = json.dumps(context.get("list_request"), ensure_ascii=False, indent=2)
+        candidates_str = json.dumps(context.get("candidates"), ensure_ascii=False, indent=2)
+        return (
+            "你已经执行过一次列表操作，以下是模型必须参考的补充信息：\n"
+            "LIST_REQUEST:\n"
+            f"{request_str}\n"
+            "CANDIDATES (JSON Array):\n"
+            f"{candidates_str}\n"
+            "后续所有 delete/update 指令必须从上述候选的 id 中挑选。"
         )
 
     def _call_model(self, prompt: str) -> str:

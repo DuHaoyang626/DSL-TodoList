@@ -260,7 +260,8 @@ class AssistantChatPanel:
         try:
             result = self.assistant.run_instruction(text, apply_changes=True)
         except Exception as exc:  # noqa: BLE001 - surface raw error text for clarity
-            self.frame.after(0, lambda: self._handle_error(str(exc)))
+            message = str(exc)
+            self.frame.after(0, lambda msg=message: self._handle_error(msg))
             return
         self.frame.after(0, lambda: self._handle_success(result))
 
