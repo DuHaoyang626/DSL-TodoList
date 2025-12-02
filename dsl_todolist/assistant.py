@@ -21,7 +21,18 @@ DEFAULT_MODEL = "qwen3:4b"
 # DEFAULT_MODEL = "qwen3:4b"
 # DEFAULT_MODEL = "llama3.2:3b"
 
-PROMPT_FILE = Path(__file__).resolve().parent / "prompts" / "todo_prompt.dsl"
+PROMPT_DIR = Path(__file__).resolve().parent / "prompts"
+PROMPT_FILES = {
+    "router": PROMPT_DIR / "router.dsl",
+    "create": PROMPT_DIR / "create.dsl",
+    "read": PROMPT_DIR / "read.dsl",
+    "list": PROMPT_DIR / "list.dsl",
+    "delete_request": PROMPT_DIR / "delete_request.dsl",
+    "delete_select": PROMPT_DIR / "delete_select.dsl",
+    "update_request": PROMPT_DIR / "update_request.dsl",
+    "update_select": PROMPT_DIR / "update_select.dsl",
+}
+ALLOWED_ACTIONS = {"create", "read", "update", "delete", "list"}
 
 
 @dataclass
@@ -48,7 +59,7 @@ class TodoAssistant:
         self.endpoint = endpoint
         self.timeout = timeout
         self.verbose = verbose
-        self._prompt_template: Optional[str] = None
+        self._prompt_cache: Dict[str, str] = {}
 
     def run_instruction(self, nl_text: str, *, apply_changes: bool = True) -> AssistantResult:
         """Convert NL text into a JSON operation and optionally execute it."""
@@ -61,33 +72,102 @@ class TodoAssistant:
 
     # ==== Core flow ========================================================
     def _nl_to_todo_operation(self, nl_text: str) -> Tuple[Dict[str, Any], str]:
-        context: Optional[Dict[str, Any]] = None
-        for _ in range(2):
-            prompt = self._build_prompt(nl_text, context)
-            raw_response = self._call_model(prompt)
-            parsed = self._extract_json(raw_response)
-            if parsed is None:
-                raise ValueError(f"无法从模型响应中提取 JSON: {raw_response}")
+        action = self._route_action(nl_text)
+        if action == "create":
+            operation = self._run_operation_prompt("create", nl_text, expected_action="create")
+        elif action == "list":
+            operation = self._run_operation_prompt("list", nl_text, expected_action="list")
+        elif action == "read":
+            operation = self._run_operation_prompt("read", nl_text, expected_action="read")
+        elif action == "delete":
+            operation = self._handle_delete_flow(nl_text)
+        elif action == "update":
+            operation = self._handle_update_flow(nl_text)
+        else:
+            raise ValueError(f"不支持的 action: {action}")
 
-            action = parsed.get("action")
-            summary = parsed.get("summary")
-            if not isinstance(summary, str) or not summary.strip():
-                raise ValueError("模型响应缺少 summary 或 summary 为空")
+        summary = operation.get("summary")
+        if not isinstance(summary, str) or not summary.strip():
+            raise ValueError("模型响应缺少 summary 或 summary 为空")
 
-            if action == "list" and context is None:
-                candidates = self._fetch_list_candidates(parsed)
-                context = {
-                    "list_request": parsed,
-                    "candidates": candidates,
-                }
-                continue
-            if action == "list" and context is not None:
-                raise ValueError("已提供候选列表，仍然返回 list，无法确定 id")
+        self._ensure_action_data(operation)
+        return operation, summary.strip()
 
-            self._ensure_action_data(parsed)
-            return parsed, summary.strip()
+    def _route_action(self, nl_text: str) -> str:
+        parsed = self._invoke_prompt("router", nl_text, context=None)
+        action = parsed.get("action")
+        if action not in ALLOWED_ACTIONS:
+            raise ValueError(f"路由脚本返回了非法 action: {action}")
+        return action
 
-        raise ValueError("多轮对话仍未确定待办 id，请尝试提供更精确的信息")
+    def _run_operation_prompt(
+        self,
+        template_name: str,
+        instruction: str,
+        *,
+        context: Optional[Dict[str, Any]] = None,
+        expected_action: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        parsed = self._invoke_prompt(template_name, instruction, context)
+        action = parsed.get("action")
+        if not isinstance(action, str):
+            raise ValueError(f"{template_name} 模型响应缺少 action 字段")
+        if expected_action and action != expected_action:
+            raise ValueError(f"{template_name} 模板期望 action={expected_action}，实际为 {action}")
+        return parsed
+
+    def _invoke_prompt(
+        self,
+        template_name: str,
+        instruction: str,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        prompt = self._build_prompt(template_name, instruction, context)
+        raw_response = self._call_model(prompt)
+        parsed = self._extract_json(raw_response)
+        if parsed is None:
+            raise ValueError(f"无法从模型响应中提取 JSON: {raw_response}")
+        return parsed
+
+    def _handle_delete_flow(self, nl_text: str) -> Dict[str, Any]:
+        stage1 = self._run_operation_prompt("delete_request", nl_text)
+        action = stage1.get("action")
+        if action == "delete":
+            return stage1
+        if action != "list":
+            raise ValueError("删除流程第一阶段需返回 delete 或 list")
+        candidates = self._fetch_list_candidates(stage1)
+        context = {
+            "list_request": stage1,
+            "candidates": candidates,
+            "hint": "只能从 candidates 中挑选 id 用于删除",
+        }
+        return self._run_operation_prompt(
+            "delete_select",
+            nl_text,
+            context=context,
+            expected_action="delete",
+        )
+
+    def _handle_update_flow(self, nl_text: str) -> Dict[str, Any]:
+        stage1 = self._run_operation_prompt("update_request", nl_text)
+        action = stage1.get("action")
+        if action == "update":
+            return stage1
+        if action != "list":
+            raise ValueError("更新流程第一阶段需返回 update 或 list")
+        candidates = self._fetch_list_candidates(stage1)
+        context = {
+            "list_request": stage1,
+            "candidates": candidates,
+            "hint": "只能从 candidates 中挑选 id 并按照原始需求更新字段",
+        }
+        return self._run_operation_prompt(
+            "update_select",
+            nl_text,
+            context=context,
+            expected_action="update",
+        )
 
     def _execute_operation(self, operation: Dict[str, Any]) -> Dict[str, Any]:
         action = operation.get("action")
@@ -98,39 +178,33 @@ class TodoAssistant:
         return response
 
     # ==== Helpers ==========================================================
-    def _build_prompt(self, nl_text: str, context: Optional[Dict[str, Any]]) -> str:
+    def _build_prompt(self, template_name: str, instruction: str, context: Optional[Dict[str, Any]]) -> str:
         now = datetime.now()
         now_str = now.strftime("%Y-%m-%d %H:%M")
         weekday_map = ["一", "二", "三", "四", "五", "六", "日"]
         weekday_str = f"今天是星期{weekday_map[now.weekday()]}"
         context_block = self._format_context_block(context)
-        template = self._load_prompt_template()
+        template = self._load_prompt_template(template_name)
         return template.format(
             current_time=f"{now_str}，{weekday_str}",
-            instruction=nl_text.strip(),
+            instruction=instruction.strip(),
             context_block=context_block,
         )
 
-    def _load_prompt_template(self) -> str:
-        if self._prompt_template is None:
-            if not PROMPT_FILE.exists():
-                raise FileNotFoundError(f"未找到 DSL 提示词文件: {PROMPT_FILE}")
-            self._prompt_template = PROMPT_FILE.read_text(encoding="utf-8")
-        return self._prompt_template
+    def _load_prompt_template(self, name: str) -> str:
+        if name not in PROMPT_FILES:
+            raise ValueError(f"未知的模板: {name}")
+        if name not in self._prompt_cache:
+            path = PROMPT_FILES[name]
+            if not path.exists():
+                raise FileNotFoundError(f"未找到 DSL 提示词文件: {path}")
+            self._prompt_cache[name] = path.read_text(encoding="utf-8")
+        return self._prompt_cache[name]
 
     def _format_context_block(self, context: Optional[Dict[str, Any]]) -> str:
         if not context:
-            return "无补充上下文"
-        request_str = json.dumps(context.get("list_request"), ensure_ascii=False, indent=2)
-        candidates_str = json.dumps(context.get("candidates"), ensure_ascii=False, indent=2)
-        return (
-            "你已经执行过一次列表操作，以下是模型必须参考的补充信息：\n"
-            "LIST_REQUEST:\n"
-            f"{request_str}\n"
-            "CANDIDATES (JSON Array):\n"
-            f"{candidates_str}\n"
-            "后续所有 delete/update 指令必须从上述候选的 id 中挑选。"
-        )
+            return "NONE"
+        return json.dumps(context, ensure_ascii=False, indent=2)
 
     def _call_model(self, prompt: str) -> str:
         payload = {"model": self.model_name, "prompt": prompt, "stream": False}
