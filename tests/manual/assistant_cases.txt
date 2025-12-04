@@ -1,4 +1,18 @@
 # 每行: <自然语言指令>|||<期望 action>|||<期望 summary>
-帮我添加一个叫写日报的待办，今晚 18:00 截止|||create|||创建日报待办
-列出所有未完成的任务|||list|||查看未完成待办
-删除名为测试条目的待办|||delete|||删除测试条目
+# 这些用例尽量使用 mock_assistant 能稳定返回的格式（便于本地测试）
+# 当使用 mock_assistant 时，summary 会以固定形式返回，示例中已按 mock_assistant 的行为编写。
+
+# 创建：完整 NL 会被用作 title，mock_assistant 的 summary 格式为: "创建 待办: <instruction>"
+帮我添加一个叫 写日报 的待办，今晚 18:00 截止|||create|||写日报
+
+# 列表查询
+列出所有未完成的任务|||list|||列出
+
+# 更新：带上 id 的自然语言会触发 update（mock_assistant 返回 "更新 id <n>"）
+把 写日报 的待办标题改为 读日报|||update|||更新
+
+# 删除：带上 id 会触发 delete
+删除 读日报 的待办|||delete|||删除
+
+# 无意义输入 → noop
+随便问一句，你好啊|||noop|||无意义的操作

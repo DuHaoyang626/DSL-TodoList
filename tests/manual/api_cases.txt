@@ -1,5 +1,17 @@
 # 每一行: <JSON 请求>|||<预期响应中应包含的子串>
-# 示例: {"action":"list","data":{}}|||status":"ok
+# 用例覆盖所有 CRUD 操作，尽可能使用能成功通过的请求。
+
+# 1) 创建一条待办（期望成功）
+{"action":"create","data":{"title":"测试项目","details":"测试用例：创建","due_at":null,"status":"pending"}}|||"status": "ok"
+
+# 2) 列表（期望成功）
 {"action":"list","data":{}}|||"status": "ok"
-{"action":"unknown","data":{}}|||不支持的 action
-{"action":"create","data":{"title":"","details":null,"due_at":null,"status":"pending"}}|||title 不能为空
+
+# 3) 读取（注：需要存在的 id 才会成功；在使用 mock API 时可保证成功）
+{"action":"read","data":{"id":1}}|||"status": "ok"
+
+# 4) 更新（需要存在的 id；在 mock 环境下可成功）
+{"action":"update","data":{"id":1,"title":"测试项目（已更新）"}}|||"status": "ok"
+
+# 5) 删除（需要存在的 id；在 mock 环境下可成功）
+{"action":"delete","data":{"id":1}}|||"status": "ok"

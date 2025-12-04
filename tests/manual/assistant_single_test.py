@@ -12,6 +12,31 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from dsl_todolist.assistant import TodoAssistant
 
+# Edit these before running to force mock behavior without CLI args.
+# - USE_MOCK_API: when True, swap the API handler to `dsl_todolist.mock_api`.
+# - USE_MOCK_ASSISTANT: when True, use `dsl_todolist.mock_assistant.MockAssistant`.
+USE_MOCK_API = False
+USE_MOCK_ASSISTANT = False
+
+if USE_MOCK_API:
+    try:
+        from dsl_todolist import mock_api  # type: ignore
+        # patch the real API handler used by other modules
+        from dsl_todolist import api as _real_api
+
+        _real_api.handle_json_request = mock_api.handle_json_request  # type: ignore[attr-defined]
+    except Exception:
+        # ignore import errors here; running without mock_api available will raise later
+        pass
+
+if USE_MOCK_ASSISTANT:
+    try:
+        from dsl_todolist.mock_assistant import MockAssistant as _MockAssistant  # type: ignore
+    except Exception:
+        _MockAssistant = None
+else:
+    _MockAssistant = None
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Single assistant test runner (real LLM)")
@@ -38,7 +63,11 @@ def main() -> None:
         print("空指令，退出。")
         return
 
-    assistant = TodoAssistant()
+    if _MockAssistant is not None:
+        assistant = _MockAssistant()
+    else:
+        assistant = TodoAssistant()
+
     result = assistant.run_instruction(nl_text, apply_changes=not args.no_apply)
     print("=== Assistant Operation ===")
     print(json.dumps(result.operation, ensure_ascii=False, indent=2))

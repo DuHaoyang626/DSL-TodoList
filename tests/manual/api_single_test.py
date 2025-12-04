@@ -16,6 +16,18 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from dsl_todolist.api import handle_json_request
 
+# Edit these before running to force mock behavior without CLI args.
+# - USE_MOCK_API: when True, swap the API handler to `dsl_todolist.mock_api`.
+USE_MOCK_API = False
+
+if USE_MOCK_API:
+    try:
+        from dsl_todolist import mock_api  # type: ignore
+        handle_json_request = mock_api.handle_json_request  # type: ignore[attr-defined]
+    except Exception:
+        # ignore import errors here; running without mock_api available will raise later
+        pass
+
 
 def main() -> None:
     print("=== 单次 API 测试 ===")

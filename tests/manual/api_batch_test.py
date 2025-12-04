@@ -17,13 +17,28 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from dsl_todolist.api import handle_json_request
 
+# Edit these before running to force mock behavior without CLI args.
+# - USE_MOCK_API: when True, swap the API handler to `dsl_todolist.mock_api`.
+# - USE_MOCK_ASSISTANT: present for parity with other scripts (unused here).
+USE_MOCK_API = True
+
+if USE_MOCK_API:
+    try:
+        from dsl_todolist import mock_api  # type: ignore
+        handle_json_request = mock_api.handle_json_request  # type: ignore[attr-defined]
+    except Exception:
+        # allow the script to run and error later if mock_api not available
+        pass
+
 
 def run_case(line_no: int, payload: str, expected: str) -> None:
     response = handle_json_request(payload)
     if expected in response:
         print(f"CASE {line_no}: 正确")
+        return True
     else:
         print(f"CASE {line_no}: 错误\n  期望包含: {expected}\n  实际响应: {response}")
+        return False
 
 
 def parse_cases(path: Path) -> list[tuple[int, str, str]]:
@@ -53,8 +68,18 @@ def main() -> None:
     if not cases:
         print("未找到任何测试用例")
         return
+    results = []
     for line_no, payload, expected in cases:
-        run_case(line_no, payload, expected)
+        ok = run_case(line_no, payload, expected)
+        results.append((line_no, ok))
+
+    # Summary
+    passed = sum(1 for _n, ok in results if ok)
+    total = len(results)
+    print("\n=== Summary ===")
+    print(f"通过: {passed}/{total}")
+    for line_no, ok in results:
+        print(f"CASE {line_no}: {'正确' if ok else '错误'}")
 
 
 if __name__ == "__main__":

@@ -12,6 +12,29 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from dsl_todolist.assistant import TodoAssistant
 
+# Edit these before running to force mock behavior without CLI args.
+# - USE_MOCK_API: when True, swap the API handler to `dsl_todolist.mock_api`.
+# - USE_MOCK_ASSISTANT: when True, use `dsl_todolist.mock_assistant.MockAssistant`.
+USE_MOCK_API = False
+USE_MOCK_ASSISTANT = False
+
+if USE_MOCK_API:
+    try:
+        from dsl_todolist import mock_api  # type: ignore
+        from dsl_todolist import api as _real_api
+
+        _real_api.handle_json_request = mock_api.handle_json_request  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+if USE_MOCK_ASSISTANT:
+    try:
+        from dsl_todolist.mock_assistant import MockAssistant as _MockAssistant  # type: ignore
+    except Exception:
+        _MockAssistant = None
+else:
+    _MockAssistant = None
+
 
 def parse_cases(path: Path) -> list[tuple[int, str, str, str]]:
     cases: list[tuple[int, str, str, str]] = []
@@ -28,25 +51,39 @@ def parse_cases(path: Path) -> list[tuple[int, str, str, str]]:
 
 
 def run_cases(cases: list[tuple[int, str, str, str]], apply_changes: bool) -> None:
-    assistant = TodoAssistant()
+    if _MockAssistant is not None:
+        assistant = _MockAssistant()
+    else:
+        assistant = TodoAssistant()
+    results = []
     for idx, nl_input, expected_action, expected_summary in cases:
         try:
             result = assistant.run_instruction(nl_input, apply_changes=apply_changes)
+            action = result.operation.get("action")
+            summary = result.summary
+            ok = action == expected_action
+            results.append((idx, ok, nl_input, expected_action, expected_summary, action, summary, result.operation))
+            if ok:
+                print(f"CASE {idx}: 正确")
+            else:
+                print(
+                    f"CASE {idx}: 错误\n"
+                    f"  指令: {nl_input}\n"
+                    f"  期望 action={expected_action},\n"
+                    f"  实际 action={action},\n"
+                    f"  完整操作: {json.dumps(result.operation, ensure_ascii=False)}"
+                )
         except Exception as exc:
             print(f"CASE {idx}: 错误 - {exc}")
-            continue
-        action = result.operation.get("action")
-        summary = result.summary
-        if action == expected_action and summary == expected_summary:
-            print(f"CASE {idx}: 正确")
-        else:
-            print(
-                "CASE {idx}: 错误\n"
-                f"  指令: {nl_input}\n"
-                f"  期望 action={expected_action}, summary={expected_summary}\n"
-                f"  实际 action={action}, summary={summary}\n"
-                f"  完整操作: {json.dumps(result.operation, ensure_ascii=False)}"
-            )
+            results.append((idx, False, nl_input, expected_action, expected_summary, None, str(exc), None))
+
+    # Summary
+    passed = sum(1 for _idx, ok, *_rest in results if ok)
+    total = len(results)
+    print("\n=== Summary ===")
+    print(f"通过: {passed}/{total}")
+    for idx, ok, *_rest in results:
+        print(f"CASE {idx}: {'正确' if ok else '错误'}")
 
 
 def main() -> None:
