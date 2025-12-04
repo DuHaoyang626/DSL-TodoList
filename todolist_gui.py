@@ -10,8 +10,8 @@ from dsl_todolist.gui import main, TodoApp
 # Edit these flags before running to switch modes without CLI args.
 # - Set `USE_MOCK_API = True` to use the in-memory mock API.
 # - Set `USE_MOCK_ASSISTANT = True` to use the rule-based mock assistant.
-USE_MOCK_API = True
-USE_MOCK_ASSISTANT = True
+USE_MOCK_API = False
+USE_MOCK_ASSISTANT = False
 
 
 if __name__ == "__main__":
