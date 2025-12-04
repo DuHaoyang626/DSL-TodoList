@@ -13,8 +13,17 @@ from markdown import markdown
 from tkhtmlview import HTMLScrolledText
 from tkinter import messagebox, scrolledtext, ttk
 
-from .api import handle_json_request
+import argparse
+from .api import handle_json_request as real_handle_json_request
 from .assistant import AssistantResult, TodoAssistant
+try:
+    from . import mock_api  # optional import; may not be used
+except Exception:
+    mock_api = None
+try:
+    from . import mock_assistant  # optional import; may not be used
+except Exception:
+    mock_assistant = None
 from .db import ensure_schema
 
 DATETIME_FMT = "%Y-%m-%d %H:%M"
@@ -595,7 +604,13 @@ class TodoCreateDialog(tk.Toplevel):
 
 
 class TodoApp:
-    def __init__(self) -> None:
+    def __init__(self, *, use_mock_api: bool = False, use_mock_assistant: bool = False) -> None:
+        """Create the GUI application.
+
+        Flags:
+        - `use_mock_api`: when True, use in-memory `mock_api.handle_json_request` instead of real DB API.
+        - `use_mock_assistant`: when True, use `mock_assistant.MockAssistant` instead of the real LLM assistant.
+        """
         ensure_schema()
 
         self.root = tk.Tk()
@@ -617,7 +632,21 @@ class TodoApp:
             "逾期": "overdue",
         }
 
-        self.assistant = TodoAssistant()
+        # Choose API handler
+        if use_mock_api:
+            if mock_api is None:
+                raise RuntimeError("mock_api 模块不可用")
+            self._api_handler = mock_api.handle_json_request
+        else:
+            self._api_handler = real_handle_json_request
+
+        # Choose assistant implementation
+        if use_mock_assistant:
+            if mock_assistant is None:
+                raise RuntimeError("mock_assistant 模块不可用")
+            self.assistant = mock_assistant.MockAssistant()
+        else:
+            self.assistant = TodoAssistant()
 
         self._build_layout()
         self.refresh_lists()
@@ -868,7 +897,7 @@ class TodoApp:
 
     def _call_api(self, action: str, data: dict):
         payload = json.dumps({"action": action, "data": data}, ensure_ascii=False)
-        response = json.loads(handle_json_request(payload))
+        response = json.loads(self._api_handler(payload))
         print("\n=== API 调用 (GUI) ===")
         print(json.dumps({"action": action, "data": data}, ensure_ascii=False, indent=2))
         print("=== API 结果 ===")
@@ -879,7 +908,17 @@ class TodoApp:
 
 
 def main() -> None:
-    app = TodoApp()
+    parser = argparse.ArgumentParser(prog="todolist_gui")
+    parser.add_argument("--mock-api", dest="mock_api", action="store_true", help="Use in-memory mock API instead of real DB API")
+    parser.add_argument(
+        "--mock-assistant",
+        dest="mock_assistant",
+        action="store_true",
+        help="Use rule-based mock assistant instead of real LLM (no network)",
+    )
+    args = parser.parse_args()
+
+    app = TodoApp(use_mock_api=args.mock_api, use_mock_assistant=args.mock_assistant)
     app.run()
 
 
