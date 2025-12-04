@@ -1,4 +1,0 @@
-{
-  "deprecated": true,
-  "note": "This combined flow is kept for reference only. Use the split fixtures (create_todo.json, read_created_todo.json, update_created_todo.json, delete_created_todo.json) with the interactive runner."
-}

@@ -1,0 +1,5 @@
+# 每一行: <JSON 请求>|||<预期响应中应包含的子串>
+# 示例: {"action":"list","data":{}}|||status":"ok
+{"action":"list","data":{}}|||"status": "ok"
+{"action":"unknown","data":{}}|||不支持的 action
+{"action":"create","data":{"title":"","details":null,"due_at":null,"status":"pending"}}|||title 不能为空
