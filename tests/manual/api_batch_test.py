@@ -20,7 +20,7 @@ from dsl_todolist.api import handle_json_request
 # Edit these before running to force mock behavior without CLI args.
 # - USE_MOCK_API: when True, swap the API handler to `dsl_todolist.mock_api`.
 # - USE_MOCK_ASSISTANT: present for parity with other scripts (unused here).
-USE_MOCK_API = True
+USE_MOCK_API = False
 
 if USE_MOCK_API:
     try:
