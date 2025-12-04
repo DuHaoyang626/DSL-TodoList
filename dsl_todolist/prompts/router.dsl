@@ -12,7 +12,7 @@ END SECTION
 
 SECTION SPEC
   RULE 1: 你必须根据用户自然语言意图推断最合适的操作类型。
-  RULE 2: 可选操作集合为 {{create, read, update, delete, list}}。
+  RULE 2: 可选操作集合为 {{create, update, delete, list}}。
   RULE 3: 输出 JSON 必须严格为 {{"action": "<operation>"}}，不包含其他键或文本。
   RULE 4: 当用户提出泛查询（如“查看/显示/列出”但未给出具体 ID）时，请选择 list。
   RULE 5: 只有当用户明确提供了 ID 或“第 X 条”等唯一定位信息时，才能选择 read。

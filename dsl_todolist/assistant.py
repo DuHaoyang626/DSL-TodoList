@@ -25,14 +25,13 @@ PROMPT_DIR = Path(__file__).resolve().parent / "prompts"
 PROMPT_FILES = {
     "router": PROMPT_DIR / "router.dsl",
     "create": PROMPT_DIR / "create.dsl",
-    "read": PROMPT_DIR / "read.dsl",
     "list": PROMPT_DIR / "list.dsl",
     "delete_request": PROMPT_DIR / "delete_request.dsl",
     "delete_select": PROMPT_DIR / "delete_select.dsl",
     "update_request": PROMPT_DIR / "update_request.dsl",
     "update_select": PROMPT_DIR / "update_select.dsl",
 }
-ALLOWED_ACTIONS = {"create", "read", "update", "delete", "list", "noop"}
+ALLOWED_ACTIONS = {"create", "update", "delete", "list", "noop"}
 
 
 MODEL_PROVIDER = "deepseek"  # options: "ollama" or "deepseek"
@@ -91,8 +90,6 @@ class TodoAssistant:
             operation = self._run_operation_prompt("create", nl_text, expected_action="create")
         elif action == "list":
             operation = self._run_operation_prompt("list", nl_text, expected_action="list")
-        elif action == "read":
-            operation = self._run_operation_prompt("read", nl_text, expected_action="read")
         elif action == "delete":
             operation = self._handle_delete_flow(nl_text)
         elif action == "update":
