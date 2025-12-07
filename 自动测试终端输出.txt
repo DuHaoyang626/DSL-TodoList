@@ -1,0 +1,772 @@
+PS C:\code\project\DSL-TodoList> python tests/manual/api_single_test.py                                              
+=== 单次 API 测试 ===
+请输入完整的 JSON 请求，例如: {"action": "list", "data": {}}
+Payload>  {"action": "list", "data": {}}
+=== API 响应 ===
+{"status": "ok", "data": [{"id": 1, "title": "test", "details": "a test", "due_at": "2025-12-31 23:59", "status": "pending"}]}
+PS C:\code\project\DSL-TodoList> python tests/manual/api_batch_test.py --cases tests/manual/api_cases.txt            
+CASE 5: 正确
+CASE 8: 正确
+CASE 11: 正确
+CASE 14: 正确
+CASE 17: 正确
+
+=== Summary ===
+通过: 5/5
+CASE 5: 正确
+CASE 8: 正确
+CASE 11: 正确
+CASE 14: 正确
+CASE 17: 正确
+PS C:\code\project\DSL-TodoList> python tests/manual/assistant_single_test.py --text "帮我添加一个叫写日报的待办"    
+
+=== LLM Prompt (deepseek) ===
+SCRIPT TodoActionRouter v1.0
+
+SET CURRENT_TIME = "2025-12-04 23:28，今天是星期四"
+
+SECTION USER_INSTRUCTION
+帮我添加一个叫写日报的待办
+END SECTION
+
+SECTION CONTEXT
+NONE
+END SECTION
+
+SECTION SPEC
+  RULE 1: 你必须根据用户自然语言意图推断最合适的操作类型。
+  RULE 2: 可选操作集合为 {create, update, delete, list}。
+  RULE 3: 输出 JSON 必须严格为 {"action": "<operation>"}，不包含其他键或文本。
+  RULE 4: 当用户提出泛查询（如“查看/显示/列出”但未给出具体 ID）时，请选择 list。
+  RULE 5: 只有当用户明确提供了 ID 或“第 X 条”等唯一定位信息时，才能选择 read。
+  RULE 6: 当用户想新增事项，选择 create；想修改内容，选择 update；想删除事项，选择 delete。
+  RULE 7: 如果上下文给出硬性指示，必须服从 CONTEXT 的约束。
+  RULE 8: 如果输入明显是无意义的文字（如随机字符、垃圾文本或无法理解的短语），请输出 {"action": "noop"}。
+END SECTION
+
+TASK
+  1. 阅读 USER_INSTRUCTION 与 CONTEXT。
+  2. 选择一个满足 SPEC 的操作类型。
+  3. 仅输出符合 RULE 3 的 JSON。
+END TASK
+
+=== LLM Response ===
+{"action": "create"}
+
+=== LLM Prompt (deepseek) ===
+SCRIPT TodoCreatePlan v1.0
+
+SET CURRENT_TIME = "2025-12-04 23:28，今天是星期四"
+
+SECTION CONTEXT
+NONE
+END SECTION
+
+SECTION USER_INSTRUCTION
+"""
+帮我添加一个叫写日报的待办
+"""
+END SECTION
+
+SECTION SPEC
+  RULE 1: 输出 JSON 必须包含 action、data、summary。
+  RULE 2: action 固定为 "create"。
+  RULE 3: data 需要给出 title、details、due_at、status，其中 details 与 due_at 可为 null，status ∈ {"pending", "completed"}，默认 "pending"。
+  RULE 4: 若用户未提供截止时间，due_at= null；若提供相对时间，基于 CURRENT_TIME 解析为 YYYY-MM-DD HH:MM。
+  RULE 5: summary 为 20 字以内中文，概括创建目标。
+  RULE 6: 不得输出 JSON 之外任何字符（无 Markdown、无注释）。
+END SECTION
+
+TASK
+  1. 解析 USER_INSTRUCTION。
+  2. 根据 SPEC 构造 create 操作 JSON。
+  3. 返回 JSON 作为最终输出。
+END TASK
+
+=== LLM Response ===
+{
+  "action": "create",
+  "data": {
+    "title": "写日报",
+    "details": null,
+    "due_at": null,
+    "status": "pending"
+  },
+  "summary": "创建待办事项：写日报"
+}
+
+=== API 调用 (LLM) ===
+{
+  "action": "create",
+  "data": {
+    "title": "写日报",
+    "details": null,
+    "due_at": null,
+    "status": "pending"
+  }
+}
+=== API 结果 ===
+{
+  "status": "ok",
+  "data": {
+    "id": 71,
+    "title": "写日报",
+    "details": null,
+    "due_at": null,
+    "status": "pending"
+  }
+}
+=== Assistant Operation ===
+{
+  "action": "create",
+  "data": {
+    "title": "写日报",
+    "details": null,
+    "due_at": null,
+    "status": "pending"
+  },
+  "summary": "创建待办事项：写日报"
+}
+=== Summary ===
+创建待办事项：写日报
+=== API Response ===
+{
+  "status": "ok",
+  "data": {
+    "id": 71,
+    "title": "写日报",
+    "details": null,
+    "due_at": null,
+    "status": "pending"
+  }
+}
+PS C:\code\project\DSL-TodoList> python tests/manual/assistant_batch_test.py --cases tests/manual/assistant_cases.txt
+
+=== LLM Prompt (deepseek) ===
+SCRIPT TodoActionRouter v1.0
+
+SET CURRENT_TIME = "2025-12-04 23:28，今天是星期四"
+
+SECTION USER_INSTRUCTION
+帮我添加一个叫 写日报 的待办，今晚 18:00 截止
+END SECTION
+
+SECTION CONTEXT
+NONE
+END SECTION
+
+SECTION SPEC
+  RULE 1: 你必须根据用户自然语言意图推断最合适的操作类型。
+  RULE 2: 可选操作集合为 {create, update, delete, list}。
+  RULE 3: 输出 JSON 必须严格为 {"action": "<operation>"}，不包含其他键或文本。
+  RULE 4: 当用户提出泛查询（如“查看/显示/列出”但未给出具体 ID）时，请选择 list。
+  RULE 5: 只有当用户明确提供了 ID 或“第 X 条”等唯一定位信息时，才能选择 read。
+  RULE 6: 当用户想新增事项，选择 create；想修改内容，选择 update；想删除事项，选择 delete。
+  RULE 7: 如果上下文给出硬性指示，必须服从 CONTEXT 的约束。
+  RULE 8: 如果输入明显是无意义的文字（如随机字符、垃圾文本或无法理解的短语），请输出 {"action": "noop"}。
+END SECTION
+
+TASK
+  1. 阅读 USER_INSTRUCTION 与 CONTEXT。
+  2. 选择一个满足 SPEC 的操作类型。
+  3. 仅输出符合 RULE 3 的 JSON。
+END TASK
+
+=== LLM Response ===
+{"action": "create"}
+
+=== LLM Prompt (deepseek) ===
+SCRIPT TodoCreatePlan v1.0
+
+SET CURRENT_TIME = "2025-12-04 23:28，今天是星期四"
+
+SECTION CONTEXT
+NONE
+END SECTION
+
+SECTION USER_INSTRUCTION
+"""
+帮我添加一个叫 写日报 的待办，今晚 18:00 截止
+"""
+END SECTION
+
+SECTION SPEC
+  RULE 1: 输出 JSON 必须包含 action、data、summary。
+  RULE 2: action 固定为 "create"。
+  RULE 3: data 需要给出 title、details、due_at、status，其中 details 与 due_at 可为 null，status ∈ {"pending", "completed"}，默认 "pending"。
+  RULE 4: 若用户未提供截止时间，due_at= null；若提供相对时间，基于 CURRENT_TIME 解析为 YYYY-MM-DD HH:MM。
+  RULE 5: summary 为 20 字以内中文，概括创建目标。
+  RULE 6: 不得输出 JSON 之外任何字符（无 Markdown、无注释）。
+END SECTION
+
+TASK
+  1. 解析 USER_INSTRUCTION。
+  2. 根据 SPEC 构造 create 操作 JSON。
+  3. 返回 JSON 作为最终输出。
+END TASK
+
+=== LLM Response ===
+{
+  "action": "create",
+  "data": {
+    "title": "写日报",
+    "details": null,
+    "due_at": "2025-12-04 18:00",
+    "status": "pending"
+  },
+  "summary": "创建今晚18:00截止的写日报待办"
+}
+
+=== API 调用 (LLM) ===
+{
+  "action": "create",
+  "data": {
+    "title": "写日报",
+    "details": null,
+    "due_at": "2025-12-04 18:00",
+    "status": "pending"
+  }
+}
+=== API 结果 ===
+{
+  "status": "ok",
+  "data": {
+    "id": 72,
+    "title": "写日报",
+    "details": null,
+    "due_at": "2025-12-04 18:00",
+    "status": "pending"
+  }
+}
+CASE 6: 正确
+
+=== LLM Prompt (deepseek) ===
+SCRIPT TodoActionRouter v1.0
+
+SET CURRENT_TIME = "2025-12-04 23:28，今天是星期四"
+
+SECTION USER_INSTRUCTION
+列出所有未完成的任务
+END SECTION
+
+SECTION CONTEXT
+NONE
+END SECTION
+
+SECTION SPEC
+  RULE 1: 你必须根据用户自然语言意图推断最合适的操作类型。
+  RULE 2: 可选操作集合为 {create, update, delete, list}。
+  RULE 3: 输出 JSON 必须严格为 {"action": "<operation>"}，不包含其他键或文本。
+  RULE 4: 当用户提出泛查询（如“查看/显示/列出”但未给出具体 ID）时，请选择 list。
+  RULE 5: 只有当用户明确提供了 ID 或“第 X 条”等唯一定位信息时，才能选择 read。
+  RULE 6: 当用户想新增事项，选择 create；想修改内容，选择 update；想删除事项，选择 delete。
+  RULE 7: 如果上下文给出硬性指示，必须服从 CONTEXT 的约束。
+  RULE 8: 如果输入明显是无意义的文字（如随机字符、垃圾文本或无法理解的短语），请输出 {"action": "noop"}。
+END SECTION
+
+TASK
+  1. 阅读 USER_INSTRUCTION 与 CONTEXT。
+  2. 选择一个满足 SPEC 的操作类型。
+  3. 仅输出符合 RULE 3 的 JSON。
+END TASK
+
+=== LLM Response ===
+{"action": "list"}
+
+=== LLM Prompt (deepseek) ===
+SCRIPT TodoListPlan v1.0
+
+SET CURRENT_TIME = "2025-12-04 23:28，今天是星期四"
+
+SECTION CONTEXT
+NONE
+END SECTION
+
+SECTION USER_INSTRUCTION
+"""
+列出所有未完成的任务
+"""
+END SECTION
+
+SECTION SPEC
+  RULE 1: 输出 JSON 必须包含 action、data、summary。
+  RULE 2: action 固定为 "list"。
+  RULE 3: data 可包含 keyword、status、due_from、due_to，缺失字段不可乱填，保留与用户请求相关的过滤条件。
+  RULE 4: 若包含 due_from/due_to，应转换为 YYYY-MM-DD HH:MM；若无具体时间，则省略这些字段。
+  RULE 5: summary 限 20 字中文，概括筛选目的。
+  RULE 6: 禁止输出 JSON 以外内容。
+END SECTION
+
+TASK
+  1. 读取 USER_INSTRUCTION。
+  2. 根据 SPEC 生成 list 操作 JSON。
+  3. 输出 JSON。
+END TASK
+
+=== LLM Response ===
+```json
+{
+    "action": "list",
+    "data": {
+        "status": "pending"
+    },
+    "summary": "列出所有未完成的任务"
+}
+```
+
+=== API 调用 (LLM) ===
+{
+  "action": "list",
+  "data": {
+    "status": "pending"
+  }
+}
+=== API 结果 ===
+{
+  "status": "ok",
+  "data": [
+    {
+      "id": 72,
+      "title": "写日报",
+      "details": null,
+      "due_at": "2025-12-04 18:00",
+      "status": "pending"
+    },
+    {
+      "id": 70,
+      "title": "测试项目",
+      "details": "测试用例：创建",
+      "due_at": null,
+      "status": "pending"
+    },
+    {
+      "id": 71,
+      "title": "写日报",
+      "details": null,
+      "due_at": null,
+      "status": "pending"
+    }
+  ]
+}
+CASE 9: 正确
+
+=== LLM Prompt (deepseek) ===
+SCRIPT TodoActionRouter v1.0
+
+SET CURRENT_TIME = "2025-12-04 23:28，今天是星期四"
+
+SECTION USER_INSTRUCTION
+把 写日报 的待办标题改为 读日报
+END SECTION
+
+SECTION CONTEXT
+NONE
+END SECTION
+
+SECTION SPEC
+  RULE 1: 你必须根据用户自然语言意图推断最合适的操作类型。
+  RULE 2: 可选操作集合为 {create, update, delete, list}。
+  RULE 3: 输出 JSON 必须严格为 {"action": "<operation>"}，不包含其他键或文本。
+  RULE 4: 当用户提出泛查询（如“查看/显示/列出”但未给出具体 ID）时，请选择 list。
+  RULE 5: 只有当用户明确提供了 ID 或“第 X 条”等唯一定位信息时，才能选择 read。
+  RULE 6: 当用户想新增事项，选择 create；想修改内容，选择 update；想删除事项，选择 delete。
+  RULE 7: 如果上下文给出硬性指示，必须服从 CONTEXT 的约束。
+  RULE 8: 如果输入明显是无意义的文字（如随机字符、垃圾文本或无法理解的短语），请输出 {"action": "noop"}。
+END SECTION
+
+TASK
+  1. 阅读 USER_INSTRUCTION 与 CONTEXT。
+  2. 选择一个满足 SPEC 的操作类型。
+  3. 仅输出符合 RULE 3 的 JSON。
+END TASK
+
+=== LLM Response ===
+{"action": "update"}
+
+=== LLM Prompt (deepseek) ===
+SCRIPT TodoUpdateStage1 v1.0
+
+SET CURRENT_TIME = "2025-12-04 23:28，今天是星期四"
+
+SECTION USER_INSTRUCTION
+"""
+把 写日报 的待办标题改为 读日报
+"""
+END SECTION
+
+SECTION CONTEXT
+NONE
+END SECTION
+
+SECTION SPEC
+  RULE 1: 输出 JSON 必须包含 action、data、summary。
+  RULE 2: 如果用户已提供明确 id，则 action="update"，data 至少包含 id，且根据需求填入 title/details/due_at/status 中需要修改的字段。
+  RULE 3: 若无法确定 id，则 action 必须为 "list"，根据描述给出筛选条件，以便下一步锁定候选。
+  RULE 4: summary 控制在 20 字以内，描述当前步骤目的。
+  RULE 5: 若需要调整截止时间，将相对时间换算为 YYYY-MM-DD HH:MM。
+  RULE 6: 禁止输出 JSON 以外内容。
+END SECTION
+
+TASK
+  1. 解析 USER_INSTRUCTION。
+  2. 判断能否直接构造 update 操作。
+  3. 生成符合 SPEC 的 JSON。
+END TASK
+
+=== LLM Response ===
+```json
+{
+    "action": "list",
+    "data": {
+        "filters": {
+            "title": "写日报"
+        }
+    },
+    "summary": "列出标题为'写日报'的待办"
+}
+```
+
+=== API 调用 (LLM) ===
+{
+  "action": "list",
+  "data": {
+    "filters": {
+      "title": "写日报"
+    }
+  }
+}
+=== API 结果 ===
+{
+  "status": "ok",
+  "data": [
+    {
+      "id": 72,
+      "title": "写日报",
+      "details": null,
+      "due_at": "2025-12-04 18:00",
+      "status": "pending"
+    },
+    {
+      "id": 70,
+      "title": "测试项目",
+      "details": "测试用例：创建",
+      "due_at": null,
+      "status": "pending"
+    },
+    {
+      "id": 71,
+      "title": "写日报",
+      "details": null,
+      "due_at": null,
+      "status": "pending"
+    }
+  ]
+}
+
+=== LLM Prompt (deepseek) ===
+SCRIPT TodoUpdateStage2 v1.0
+
+SET CURRENT_TIME = "2025-12-04 23:28，今天是星期四"
+
+SECTION CONTEXT
+{
+  "list_request": {
+    "action": "list",
+    "data": {
+      "filters": {
+        "title": "写日报"
+      }
+    },
+    "summary": "列出标题为'写日报'的待办"
+  },
+  "candidates": [
+    {
+      "id": 72,
+      "title": "写日报",
+      "details": null,
+      "due_at": "2025-12-04 18:00",
+      "status": "pending"
+    },
+    {
+      "id": 70,
+      "title": "测试项目",
+      "details": "测试用例：创建",
+      "due_at": null,
+      "status": "pending"
+    },
+    {
+      "id": 71,
+      "title": "写日报",
+      "details": null,
+      "due_at": null,
+      "status": "pending"
+    }
+  ],
+  "hint": "只能从 candidates 中挑选 id 并按照原始需求更新字段"
+}
+END SECTION
+
+SECTION USER_INSTRUCTION
+"""
+把 写日报 的待办标题改为 读日报
+"""
+END SECTION
+
+SECTION SPEC
+  RULE 1: CONTEXT 提供 list_request 与 candidates（JSON 数组），只能在 candidates 中选择 id。
+  RULE 2: 输出 JSON 必须包含 action、data、summary，且 action 固定为 "update"。
+  RULE 3: data 必须包含 {"id": 正整数}，并根据 USER_INSTRUCTION 提及的修改项，补充 title/details/due_at/status 中需要更新的字段；未提及的字段不要修改。
+  RULE 4: 若涉及时间，请转换为 YYYY-MM-DD HH:MM。
+  RULE 5: summary 控制在 20 字以内，概括更新内容。
+  RULE 6: 禁止输出 JSON 以外内容。
+END SECTION
+
+TASK
+  1. 结合 CONTEXT 与 USER_INSTRUCTION，确定最匹配的候选 id。
+  2. 提取用户想修改的字段。
+  3. 输出符合 SPEC 的 update 操作 JSON。
+END TASK
+
+=== LLM Response ===
+```json
+{
+    "action": "update",
+    "data": {
+        "id": 72,
+        "title": "读日报"
+    },
+    "summary": "将待办标题从'写日报'改为'读日报'"
+}
+```
+
+=== API 调用 (LLM) ===
+{
+  "action": "update",
+  "data": {
+    "id": 72,
+    "title": "读日报"
+  }
+}
+=== API 结果 ===
+{
+  "status": "ok",
+  "data": {
+    "id": 72,
+    "title": "读日报",
+    "details": null,
+    "due_at": "2025-12-04 18:00",
+    "status": "pending"
+  }
+}
+CASE 12: 正确
+
+=== LLM Prompt (deepseek) ===
+SCRIPT TodoActionRouter v1.0
+
+SET CURRENT_TIME = "2025-12-04 23:29，今天是星期四"
+
+SECTION USER_INSTRUCTION
+删除 读日报 的待办
+END SECTION
+
+SECTION CONTEXT
+NONE
+END SECTION
+
+SECTION SPEC
+  RULE 1: 你必须根据用户自然语言意图推断最合适的操作类型。
+  RULE 2: 可选操作集合为 {create, update, delete, list}。
+  RULE 3: 输出 JSON 必须严格为 {"action": "<operation>"}，不包含其他键或文本。
+  RULE 4: 当用户提出泛查询（如“查看/显示/列出”但未给出具体 ID）时，请选择 list。
+  RULE 5: 只有当用户明确提供了 ID 或“第 X 条”等唯一定位信息时，才能选择 read。
+  RULE 6: 当用户想新增事项，选择 create；想修改内容，选择 update；想删除事项，选择 delete。
+  RULE 7: 如果上下文给出硬性指示，必须服从 CONTEXT 的约束。
+  RULE 8: 如果输入明显是无意义的文字（如随机字符、垃圾文本或无法理解的短语），请输出 {"action": "noop"}。
+END SECTION
+
+TASK
+  1. 阅读 USER_INSTRUCTION 与 CONTEXT。
+  2. 选择一个满足 SPEC 的操作类型。
+  3. 仅输出符合 RULE 3 的 JSON。
+END TASK
+
+=== LLM Response ===
+{"action": "delete"}
+
+=== LLM Prompt (deepseek) ===
+SCRIPT TodoDeleteStage1 v1.0
+
+SET CURRENT_TIME = "2025-12-04 23:29，今天是星期四"
+
+SECTION USER_INSTRUCTION
+"""
+删除 读日报 的待办
+"""
+END SECTION
+
+SECTION CONTEXT
+NONE
+END SECTION
+
+SECTION SPEC
+  RULE 1: 输出 JSON 必须包含 action、data、summary。
+  RULE 2: 如果用户指明了唯一 id，则 action="delete" 且 data={"id": 正整数}。
+  RULE 3: 若无法确定 id，action 必须为 "list"，并基于用户描述提供 keyword/status/due_from/due_to 等筛选条件，以便后续查询。
+  RULE 4: summary 为 20 字以内中文，描述当前步骤目的（如“筛选可能的待办”或“删除目标已确认”）。
+  RULE 5: 禁止输出 JSON 以外内容。
+END SECTION
+
+TASK
+  1. 解析 USER_INSTRUCTION。
+  2. 判断当前能否直接删除。
+  3. 生成符合 SPEC 的 JSON。
+END TASK
+
+=== LLM Response ===
+```json
+{
+    "action": "list",
+    "data": {
+        "keyword": "读日报"
+    },
+    "summary": "筛选可能的待办"
+}
+```
+
+=== API 调用 (LLM) ===
+{
+  "action": "list",
+  "data": {
+    "keyword": "读日报"
+  }
+}
+=== API 结果 ===
+{
+  "status": "ok",
+  "data": [
+    {
+      "id": 72,
+      "title": "读日报",
+      "details": null,
+      "due_at": "2025-12-04 18:00",
+      "status": "pending"
+    }
+  ]
+}
+
+=== LLM Prompt (deepseek) ===
+SCRIPT TodoDeleteStage2 v1.0
+
+SET CURRENT_TIME = "2025-12-04 23:29，今天是星期四"
+
+SECTION CONTEXT
+{
+  "list_request": {
+    "action": "list",
+    "data": {
+      "keyword": "读日报"
+    },
+    "summary": "筛选可能的待办"
+  },
+  "candidates": [
+    {
+      "id": 72,
+      "title": "读日报",
+      "details": null,
+      "due_at": "2025-12-04 18:00",
+      "status": "pending"
+    }
+  ],
+  "hint": "只能从 candidates 中挑选 id 用于删除"
+}
+END SECTION
+
+SECTION USER_INSTRUCTION
+"""
+删除 读日报 的待办
+"""
+END SECTION
+
+SECTION SPEC
+  RULE 1: CONTEXT 会提供 list_request 与 candidates（JSON 数组）。你只能从 candidates 里选择 id。
+  RULE 2: 输出 JSON 必须包含 action、data、summary，且 action 固定为 "delete"。
+  RULE 3: data 仅包含 {"id": 正整数}，不得添加其他键。
+  RULE 4: summary 为 20 字以内中文，说明删除目标。
+  RULE 5: 禁止输出 JSON 以外内容。
+END SECTION
+
+TASK
+  1. 阅读 CONTEXT 了解候选列表。
+  2. 结合 USER_INSTRUCTION 选择最匹配的候选 id。
+  3. 输出符合 SPEC 的 delete 操作 JSON。
+END TASK
+
+=== LLM Response ===
+```json
+{
+  "action": "delete",
+  "data": {
+    "id": 72
+  },
+  "summary": "删除标题为“读日报”的待办事项"
+}
+```
+
+=== API 调用 (LLM) ===
+{
+  "action": "delete",
+  "data": {
+    "id": 72
+  }
+}
+=== API 结果 ===
+{
+  "status": "ok",
+  "data": {
+    "deleted": 1
+  }
+}
+CASE 15: 正确
+
+=== LLM Prompt (deepseek) ===
+SCRIPT TodoActionRouter v1.0
+
+SET CURRENT_TIME = "2025-12-04 23:29，今天是星期四"
+
+SECTION USER_INSTRUCTION
+随便问一句，你好啊
+END SECTION
+
+SECTION CONTEXT
+NONE
+END SECTION
+
+SECTION SPEC
+  RULE 1: 你必须根据用户自然语言意图推断最合适的操作类型。
+  RULE 2: 可选操作集合为 {create, update, delete, list}。
+  RULE 3: 输出 JSON 必须严格为 {"action": "<operation>"}，不包含其他键或文本。
+  RULE 4: 当用户提出泛查询（如“查看/显示/列出”但未给出具体 ID）时，请选择 list。
+  RULE 5: 只有当用户明确提供了 ID 或“第 X 条”等唯一定位信息时，才能选择 read。
+  RULE 6: 当用户想新增事项，选择 create；想修改内容，选择 update；想删除事项，选择 delete。
+  RULE 7: 如果上下文给出硬性指示，必须服从 CONTEXT 的约束。
+  RULE 8: 如果输入明显是无意义的文字（如随机字符、垃圾文本或无法理解的短语），请输出 {"action": "noop"}。
+END SECTION
+
+TASK
+  1. 阅读 USER_INSTRUCTION 与 CONTEXT。
+  2. 选择一个满足 SPEC 的操作类型。
+  3. 仅输出符合 RULE 3 的 JSON。
+END TASK
+
+=== LLM Response ===
+{"action": "noop"}
+CASE 18: 正确
+
+=== Summary ===
+通过: 5/5
+CASE 6: 正确
+CASE 9: 正确
+CASE 12: 正确
+CASE 15: 正确
+CASE 18: 正确
+PS C:\code\project\DSL-TodoList> 
